@@ -1,0 +1,861 @@
+{
+  "info": {
+    "name": "SecureLedger API",
+    "description": "Integration test collection for SecureLedger. Run against a live instance (see /tests/postman/README.md). Every endpoint has a success case and at least one expected-failure case. Uses the app's real httpOnly cookie session (Postman/Newman's cookie jar carries it automatically across requests within one run) plus a captured JWT copy in an environment variable for explicit invalid/expired-token tests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.environment.get('testEmail')) {",
+          "  pm.environment.set('testEmail', 'qa+' + Date.now() + '@example.com');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Authentication",
+      "item": [
+        {
+          "name": "Register — success",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"organisationName\": \"Postman Test Org\",\n  \"name\": \"Postman Tester\",\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"{{testPassword}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.test('Response includes the created user and organisation', function () {",
+                  "  pm.expect(json.user.email).to.eql(pm.environment.get('testEmail'));",
+                  "  pm.expect(json.user.role).to.eql('ACCOUNTANT');",
+                  "  pm.expect(json.organisation.name).to.eql('Postman Test Org');",
+                  "});",
+                  "pm.test('Sets the session cookie', function () {",
+                  "  pm.expect(pm.cookies.has('secureledger_session')).to.be.true;",
+                  "});",
+                  "pm.environment.set('jwt_token', pm.cookies.get('secureledger_session'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register — failure (duplicate email)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"organisationName\": \"Another Org\",\n  \"name\": \"Someone Else\",\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"{{testPassword}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 409 (email already registered)', function () { pm.response.to.have.status(409); });",
+                  "pm.test('Response includes an error message', function () { pm.expect(pm.response.json().error).to.be.a('string'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/auth/logout", "host": ["{{baseUrl}}"], "path": ["api", "auth", "logout"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me — failure (unauthenticated)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/auth/me", "host": ["{{baseUrl}}"], "path": ["api", "auth", "me"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401 when not authenticated', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login — failure (wrong password)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"the-wrong-password\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401 for wrong password', function () { pm.response.to.have.status(401); });",
+                  "pm.test('Does not reveal whether the email exists', function () { pm.expect(pm.response.json().error).to.eql('Invalid email or password'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login — success",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"{{testPassword}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Returns the logged-in user', function () { pm.expect(pm.response.json().user.email).to.eql(pm.environment.get('testEmail')); });",
+                  "pm.environment.set('jwt_token', pm.cookies.get('secureledger_session'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me — success (authenticated)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/auth/me", "host": ["{{baseUrl}}"], "path": ["api", "auth", "me"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Returns the current session user and role', function () {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.user.email).to.eql(pm.environment.get('testEmail'));",
+                  "  pm.expect(json.user.role).to.eql('ACCOUNTANT');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Accounts",
+      "item": [
+        {
+          "name": "Create Account — failure (missing fields)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Incomplete Account\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/accounts", "host": ["{{baseUrl}}"], "path": ["api", "accounts"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 400 (missing type/code)', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Cash Account — success",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Cash\",\n  \"type\": \"ASSET\",\n  \"code\": \"1000-{{$timestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/accounts", "host": ["{{baseUrl}}"], "path": ["api", "accounts"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+                  "const json = pm.response.json();",
+                  "pm.test('Returns the created account', function () { pm.expect(json.account.type).to.eql('ASSET'); });",
+                  "pm.environment.set('cashAccountId', json.account.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Expense Account — success",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Office Supplies\",\n  \"type\": \"EXPENSE\",\n  \"code\": \"5000-{{$timestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/accounts", "host": ["{{baseUrl}}"], "path": ["api", "accounts"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.environment.set('expenseAccountId', pm.response.json().account.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Income Account — success",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Consulting Revenue\",\n  \"type\": \"INCOME\",\n  \"code\": \"4000-{{$timestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/accounts", "host": ["{{baseUrl}}"], "path": ["api", "accounts"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.environment.set('incomeAccountId', pm.response.json().account.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Accounts — success",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/accounts", "host": ["{{baseUrl}}"], "path": ["api", "accounts"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Includes the accounts just created', function () {",
+                  "  const ids = pm.response.json().accounts.map(a => a.id);",
+                  "  pm.expect(ids).to.include(pm.environment.get('cashAccountId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Account — success",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Cash on Hand\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/accounts/{{cashAccountId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "accounts", "{{cashAccountId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Name was updated', function () { pm.expect(pm.response.json().account.name).to.eql('Cash on Hand'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Journal Entries",
+      "item": [
+        {
+          "name": "Post Journal Entry — failure (unbalanced)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-01-01\",\n  \"description\": \"Unbalanced entry\",\n  \"lines\": [\n    { \"accountId\": \"{{expenseAccountId}}\", \"debit\": 100, \"credit\": 0 },\n    { \"accountId\": \"{{cashAccountId}}\", \"debit\": 0, \"credit\": 40 }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/journal-entries", "host": ["{{baseUrl}}"], "path": ["api", "journal-entries"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 400 (debits != credits)', function () { pm.response.to.have.status(400); });",
+                  "pm.test('Error message mentions debits/credits', function () { pm.expect(pm.response.json().error).to.match(/credit/i); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Post Journal Entry — success",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-01-01\",\n  \"description\": \"Postman test entry\",\n  \"lines\": [\n    { \"accountId\": \"{{expenseAccountId}}\", \"debit\": 50, \"credit\": 0 },\n    { \"accountId\": \"{{cashAccountId}}\", \"debit\": 0, \"credit\": 50 }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/journal-entries", "host": ["{{baseUrl}}"], "path": ["api", "journal-entries"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+                  "const json = pm.response.json();",
+                  "pm.test('Entry is POSTED', function () { pm.expect(json.journalEntry.status).to.eql('POSTED'); });",
+                  "pm.environment.set('journalEntryId', json.journalEntry.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Journal Entries — success",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/journal-entries", "host": ["{{baseUrl}}"], "path": ["api", "journal-entries"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Includes a hash-chain entry for the posted journal entry', function () {",
+                  "  const entries = pm.response.json().journalEntries;",
+                  "  const match = entries.find(e => e.id === pm.environment.get('journalEntryId'));",
+                  "  pm.expect(match).to.not.be.undefined;",
+                  "  pm.expect(match.chain).to.not.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Invoices",
+      "item": [
+        {
+          "name": "Create Invoice — failure (missing receivable account)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"Acme Co\",\n  \"dueDate\": \"2026-02-01\",\n  \"items\": [\n    { \"description\": \"Consulting\", \"quantity\": 1, \"unitPrice\": 100, \"incomeAccountId\": \"{{incomeAccountId}}\" }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/invoices", "host": ["{{baseUrl}}"], "path": ["api", "invoices"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 400 (missing receivableAccountId)', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Invoice — success",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"Acme Co\",\n  \"dueDate\": \"2026-02-01\",\n  \"receivableAccountId\": \"{{cashAccountId}}\",\n  \"items\": [\n    { \"description\": \"Consulting\", \"quantity\": 1, \"unitPrice\": 100, \"incomeAccountId\": \"{{incomeAccountId}}\" }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/invoices", "host": ["{{baseUrl}}"], "path": ["api", "invoices"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+                  "const json = pm.response.json();",
+                  "pm.test('Invoice is DRAFT with amount 100', function () {",
+                  "  pm.expect(json.invoice.status).to.eql('DRAFT');",
+                  "  pm.expect(Number(json.invoice.amount)).to.eql(100);",
+                  "});",
+                  "pm.environment.set('invoiceId', json.invoice.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Issue Invoice — success",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"action\": \"issue\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/invoices/{{invoiceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "invoices", "{{invoiceId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Invoice is now ISSUED', function () { pm.expect(pm.response.json().invoice.status).to.eql('ISSUED'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Issue Invoice — failure (already issued)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"action\": \"issue\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/invoices/{{invoiceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "invoices", "{{invoiceId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 409 (only draft invoices can be issued)', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pay Invoice — success",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"action\": \"pay\",\n  \"cashAccountId\": \"{{cashAccountId}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/invoices/{{invoiceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "invoices", "{{invoiceId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Invoice is now PAID', function () { pm.expect(pm.response.json().invoice.status).to.eql('PAID'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Invoices — success",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/invoices", "host": ["{{baseUrl}}"], "path": ["api", "invoices"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Verification",
+      "item": [
+        {
+          "name": "Verify Journal Entry — success",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/verify/{{journalEntryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "verify", "{{journalEntryId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Verdict is pending or verified (not failed)', function () {",
+                  "  pm.expect(['pending', 'verified']).to.include(pm.response.json().verdict);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify — failure (unknown record id)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/verify/00000000-0000-0000-0000-000000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "verify", "00000000-0000-0000-0000-000000000000"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 404 for an unknown record', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Reports",
+      "item": [
+        {
+          "name": "Trial Balance — success",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/reports/trial-balance", "host": ["{{baseUrl}}"], "path": ["api", "reports", "trial-balance"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Total debits equal total credits', function () {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.totals.totalDebit).to.eql(json.totals.totalCredit);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Income Statement — success",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/reports/income-statement", "host": ["{{baseUrl}}"], "path": ["api", "reports", "income-statement"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('netIncome equals totalIncome minus totalExpenses', function () {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.netIncome).to.eql(json.totalIncome - json.totalExpenses);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7. Audit Log",
+      "item": [
+        {
+          "name": "List Audit Log — success",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/audit-log", "host": ["{{baseUrl}}"], "path": ["api", "audit-log"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Includes at least one entry', function () { pm.expect(pm.response.json().entries.length).to.be.above(0); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Export Batch Verification — failure (role not authorised)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/audit-log/export", "host": ["{{baseUrl}}"], "path": ["api", "audit-log", "export"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The Postman test user registers as ACCOUNTANT (there is no self-service way to",
+                  "// become AUDITOR through the API), so this exercises the real RBAC failure path:",
+                  "// an authenticated, but not-authorised, role attempting an AUDITOR-only action.",
+                  "pm.test('Status code is 403 (AUDITOR-only endpoint)', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8. Unauthenticated & Invalid-Session Access",
+      "description": "Negative auth tests grouped together deliberately: Newman/Postman's cookie jar re-attaches the real stored session cookie to any request for this host even if you also set a manual 'Cookie' header on the request, so these tests explicitly clear (or overwrite) the JAR itself via pm.cookies.jar() — the only reliable way to simulate an unauthenticated or forged-token request against a host the collection has already logged into. Run last so no later request needs the session restored.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.cookies.jar().unset(pm.environment.get('baseUrl'), 'secureledger_session', function () {});"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "Me — failure (no session cookie)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/auth/me", "host": ["{{baseUrl}}"], "path": ["api", "auth", "me"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status code is 401', function () { pm.response.to.have.status(401); });"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Account — failure (no session cookie)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Should not work\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/accounts/{{cashAccountId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "accounts", "{{cashAccountId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status code is 401', function () { pm.response.to.have.status(401); });"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Journal Entries — failure (no session cookie)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/journal-entries", "host": ["{{baseUrl}}"], "path": ["api", "journal-entries"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status code is 401', function () { pm.response.to.have.status(401); });"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify — failure (no session cookie)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/verify/{{journalEntryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "verify", "{{journalEntryId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status code is 401', function () { pm.response.to.have.status(401); });"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Trial Balance — failure (no session cookie)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/reports/trial-balance", "host": ["{{baseUrl}}"], "path": ["api", "reports", "trial-balance"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status code is 401', function () { pm.response.to.have.status(401); });"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Audit Log — failure (no session cookie)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/audit-log", "host": ["{{baseUrl}}"], "path": ["api", "audit-log"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Status code is 401', function () { pm.response.to.have.status(401); });"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me — failure (forged/invalid JWT)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/auth/me", "host": ["{{baseUrl}}"], "path": ["api", "auth", "me"] }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.cookies.jar().set(pm.environment.get('baseUrl'), 'secureledger_session=not-a-valid-jwt-token; Path=/', function () {});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401 for a forged/invalid session token', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" }
+  ]
+}

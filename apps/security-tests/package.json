@@ -1,0 +1,26 @@
+{
+  "name": "@secureledger/security-tests",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "jest --runInBand",
+    "test:tamper-detection": "ts-node src/runTamperSuite.ts",
+    "test:concurrency-stress": "ts-node src/runConcurrencyStressSuite.ts"
+  },
+  "dependencies": {
+    "@secureledger/checkpoint-worker": "*",
+    "@secureledger/crypto": "*",
+    "@secureledger/db": "*",
+    "@secureledger/ledger": "*",
+    "@secureledger/verification": "*"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.14.15",
+    "dotenv": "^16.4.5",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  }
+}

@@ -1,0 +1,448 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { Card } from "@/components/Card";
+import { Button } from "@/components/Button";
+import { Modal } from "@/components/Modal";
+import { Table, THead, TBody, TH, TD, EmptyState, LoadingRows } from "@/components/Table";
+import { StatusBadge } from "@/components/Badge";
+import { formatCurrency, formatDate } from "@/lib/format";
+import { useSession } from "@/lib/useSession";
+
+type Account = { id: string; name: string; code: string; type: string };
+type Invoice = {
+  id: string;
+  customerName: string;
+  amount: string;
+  status: "DRAFT" | "ISSUED" | "PAID" | "VOIDED";
+  dueDate: string;
+  lineItems: { items: { description: string; quantity: number; unitPrice: number; incomeAccountId: string }[]; receivableAccountId: string };
+};
+
+type ItemDraft = { description: string; quantity: string; unitPrice: string; incomeAccountId: string };
+
+function emptyItem(): ItemDraft {
+  return { description: "", quantity: "1", unitPrice: "", incomeAccountId: "" };
+}
+
+export default function InvoicingPage() {
+  const { session } = useSession();
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [payModalInvoice, setPayModalInvoice] = useState<Invoice | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Invoice | null>(null);
+  const [voidTarget, setVoidTarget] = useState<Invoice | null>(null);
+  const [voidReason, setVoidReason] = useState("");
+  const [showVoided, setShowVoided] = useState(true);
+  const [cashAccountId, setCashAccountId] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [dueDate, setDueDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [receivableAccountId, setReceivableAccountId] = useState("");
+  const [items, setItems] = useState<ItemDraft[]>([emptyItem()]);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const canManage = session?.user.role === "ACCOUNTANT" || session?.user.role === "AUDITOR";
+  const visibleInvoices = showVoided ? invoices : invoices.filter((i) => i.status !== "VOIDED");
+
+  const receivableAccounts = accounts.filter((a) => a.type === "ASSET");
+  const incomeAccounts = accounts.filter((a) => a.type === "INCOME");
+
+  async function loadInvoices() {
+    setLoading(true);
+    const res = await fetch("/api/invoices");
+    const data = await res.json();
+    setInvoices(data.invoices ?? []);
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    loadInvoices();
+    fetch("/api/accounts")
+      .then((r) => r.json())
+      .then((d) => setAccounts(d.accounts ?? []));
+  }, []);
+
+  const total = useMemo(
+    () => items.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.unitPrice) || 0), 0),
+    [items]
+  );
+
+  function updateItem(i: number, patch: Partial<ItemDraft>) {
+    setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
+  }
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      const res = await fetch("/api/invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerName,
+          dueDate,
+          receivableAccountId,
+          items: items.map((i) => ({
+            description: i.description,
+            quantity: Number(i.quantity),
+            unitPrice: Number(i.unitPrice),
+            incomeAccountId: i.incomeAccountId,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to create invoice");
+      setModalOpen(false);
+      setCustomerName("");
+      setReceivableAccountId("");
+      setItems([emptyItem()]);
+      loadInvoices();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create invoice");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleIssue(invoice: Invoice) {
+    setActionError(null);
+    const res = await fetch(`/api/invoices/${invoice.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "issue" }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setActionError(data.error ?? "Failed to issue invoice");
+      return;
+    }
+    loadInvoices();
+  }
+
+  async function handlePay(e: React.FormEvent) {
+    e.preventDefault();
+    if (!payModalInvoice) return;
+    setActionError(null);
+    const res = await fetch(`/api/invoices/${payModalInvoice.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "pay", cashAccountId }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setActionError(data.error ?? "Failed to record payment");
+      return;
+    }
+    setPayModalInvoice(null);
+    setCashAccountId("");
+    loadInvoices();
+  }
+
+  async function confirmDeleteInvoice() {
+    if (!deleteTarget) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/invoices/${deleteTarget.id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to delete invoice");
+      setDeleteTarget(null);
+      await loadInvoices();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to delete invoice");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmVoidInvoice() {
+    if (!voidTarget) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/invoices/${voidTarget.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "void", reason: voidReason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to void invoice");
+      setVoidTarget(null);
+      setVoidReason("");
+      await loadInvoices();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to void invoice");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-slate-900">Invoicing</h1>
+        <Button onClick={() => setModalOpen(true)}>+ New Invoice</Button>
+      </div>
+
+      {actionError && <p className="text-sm font-medium text-red-600">{actionError}</p>}
+
+      <Card>
+        <div className="mb-4 flex items-center gap-2">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
+            <input type="checkbox" checked={showVoided} onChange={(e) => setShowVoided(e.target.checked)} />
+            Show voided invoices
+          </label>
+        </div>
+        <Table>
+          <THead>
+            <tr>
+              <TH>Customer</TH>
+              <TH>Due date</TH>
+              <TH className="text-right">Amount</TH>
+              <TH>Status</TH>
+              <TH className="text-right">Actions</TH>
+            </tr>
+          </THead>
+          <TBody>
+            {loading && <LoadingRows colSpan={5} />}
+            {!loading && visibleInvoices.length === 0 && (
+              <tr>
+                <td colSpan={5}>
+                  <EmptyState message="No invoices yet. Create your first invoice." />
+                </td>
+              </tr>
+            )}
+            {visibleInvoices.map((inv) => (
+              <tr key={inv.id}>
+                <TD className="font-medium text-slate-900">{inv.customerName}</TD>
+                <TD>{formatDate(inv.dueDate)}</TD>
+                <TD className="text-right">{formatCurrency(Number(inv.amount))}</TD>
+                <TD>
+                  <StatusBadge status={inv.status} />
+                </TD>
+                <TD className="text-right">
+                  <div className="flex justify-end gap-2">
+                    {inv.status === "DRAFT" && (
+                      <Button variant="secondary" onClick={() => handleIssue(inv)}>
+                        Issue
+                      </Button>
+                    )}
+                    {inv.status === "ISSUED" && (
+                      <Button variant="secondary" onClick={() => setPayModalInvoice(inv)}>
+                        Record payment
+                      </Button>
+                    )}
+                    {inv.status === "DRAFT" && canManage && (
+                      <Button
+                        variant="danger"
+                        className="!px-3 !py-1.5 text-xs"
+                        onClick={() => {
+                          setActionError(null);
+                          setDeleteTarget(inv);
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    )}
+                    {(inv.status === "ISSUED" || inv.status === "PAID") && canManage && (
+                      <Button
+                        variant="secondary"
+                        className="!border-amber-500 !text-amber-600 !px-3 !py-1.5 text-xs"
+                        onClick={() => {
+                          setActionError(null);
+                          setVoidTarget(inv);
+                        }}
+                      >
+                        Void
+                      </Button>
+                    )}
+                  </div>
+                </TD>
+              </tr>
+            ))}
+          </TBody>
+        </Table>
+      </Card>
+
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="New Invoice">
+        <form onSubmit={handleCreate} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-bold text-slate-700">Customer name</label>
+              <input
+                required
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-bold text-slate-700">Due date</label>
+              <input
+                type="date"
+                required
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-bold text-slate-700">Receivable account</label>
+            <select
+              required
+              value={receivableAccountId}
+              onChange={(e) => setReceivableAccountId(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="">Select asset account…</option>
+              {receivableAccounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.code} — {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-sm font-bold text-slate-700">Line items</label>
+            {items.map((item, i) => (
+              <div key={i} className="grid grid-cols-12 gap-2">
+                <input
+                  required
+                  placeholder="Description"
+                  value={item.description}
+                  onChange={(e) => updateItem(i, { description: e.target.value })}
+                  className="col-span-4 rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="Qty"
+                  value={item.quantity}
+                  onChange={(e) => updateItem(i, { quantity: e.target.value })}
+                  className="col-span-2 rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Unit price"
+                  value={item.unitPrice}
+                  onChange={(e) => updateItem(i, { unitPrice: e.target.value })}
+                  className="col-span-2 rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <select
+                  required
+                  value={item.incomeAccountId}
+                  onChange={(e) => updateItem(i, { incomeAccountId: e.target.value })}
+                  className="col-span-4 rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">Income account…</option>
+                  {incomeAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} — {a.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => setItems((prev) => [...prev, emptyItem()])}
+              className="text-sm font-bold text-primary hover:underline"
+            >
+              + Add line item
+            </button>
+          </div>
+
+          <div className="rounded-lg bg-slate-50 px-4 py-3 text-right text-sm font-bold">
+            Total: {formatCurrency(total)}
+          </div>
+
+          {error && <p className="text-sm font-medium text-red-600">{error}</p>}
+          <Button type="submit" disabled={saving} className="w-full">
+            {saving ? "Saving…" : "Create draft invoice"}
+          </Button>
+        </form>
+      </Modal>
+
+      <Modal open={!!payModalInvoice} onClose={() => setPayModalInvoice(null)} title="Record Payment">
+        <form onSubmit={handlePay} className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Recording payment of {payModalInvoice && formatCurrency(Number(payModalInvoice.amount))} from{" "}
+            {payModalInvoice?.customerName}.
+          </p>
+          <div>
+            <label className="mb-1 block text-sm font-bold text-slate-700">Deposit to account</label>
+            <select
+              required
+              value={cashAccountId}
+              onChange={(e) => setCashAccountId(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="">Select asset account…</option>
+              {receivableAccounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.code} — {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button type="submit" className="w-full">
+            Confirm payment
+          </Button>
+        </form>
+      </Modal>
+
+      <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete draft invoice">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Delete this draft invoice for {deleteTarget?.customerName}? This cannot be undone.
+          </p>
+          <div className="flex gap-3">
+            <Button variant="ghost" onClick={() => setDeleteTarget(null)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={confirmDeleteInvoice} disabled={busy}>
+              {busy ? "Deleting…" : "Delete"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!voidTarget} onClose={() => setVoidTarget(null)} title="Void invoice">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Voiding the invoice for {voidTarget?.customerName} posts a reversing journal entry and marks the
+            invoice as voided. The original invoice data, hash, and chain position are never altered.
+          </p>
+          <div>
+            <label className="mb-1 block text-sm font-bold text-slate-700">Reason (required)</label>
+            <textarea
+              required
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              rows={3}
+            />
+          </div>
+          <div className="flex gap-3">
+            <Button variant="ghost" onClick={() => setVoidTarget(null)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button variant="secondary" onClick={confirmVoidInvoice} disabled={busy || !voidReason.trim()}>
+              {busy ? "Voiding…" : "Void invoice"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}

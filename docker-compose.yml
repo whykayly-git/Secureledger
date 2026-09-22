@@ -1,0 +1,73 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: secureledger
+      POSTGRES_PASSWORD: secureledger
+      POSTGRES_DB: secureledger
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secureledger"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: packages/db/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://secureledger:secureledger@db:5432/secureledger?schema=public
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://secureledger:secureledger@db:5432/secureledger?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      # Public key only — the private key never enters this service's environment.
+      CHECKPOINT_PUBLIC_KEY: ${CHECKPOINT_PUBLIC_KEY}
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+
+  checkpoint-worker:
+    build:
+      context: .
+      dockerfile: apps/checkpoint-worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://secureledger:secureledger@db:5432/secureledger?schema=public
+      # Private key held ONLY here — never in the web service's environment.
+      CHECKPOINT_PRIVATE_KEY: ${CHECKPOINT_PRIVATE_KEY}
+      CHECKPOINT_POLL_INTERVAL_MS: "60000"
+      CHECKPOINT_MAX_INTERVAL_MS: "3600000"
+      CHECKPOINT_BATCH_THRESHOLD: "500"
+      HEALTH_PORT: "8081"
+      NODE_ENV: production
+    ports:
+      - "8081:8081"
+
+volumes:
+  db-data:

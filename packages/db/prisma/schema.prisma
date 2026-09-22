@@ -1,0 +1,248 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  BOOKKEEPER
+  ACCOUNTANT
+  AUDITOR
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+enum JournalEntryStatus {
+  DRAFT
+  POSTED
+  VOID
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  VOIDED
+}
+
+enum LedgerRecordType {
+  JOURNAL_ENTRY
+  INVOICE
+}
+
+model Organisation {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]
+  accounts        Account[]
+  journalEntries  JournalEntry[]
+  invoices        Invoice[]
+  ledgerChain     LedgerChain[]
+  ledgerCheckpoints LedgerCheckpoint[]
+  adminActionLogs AdminActionLog[]
+
+  @@map("organisations")
+}
+
+model User {
+  id             String   @id @default(uuid())
+  name           String
+  email          String   @unique
+  passwordHash   String
+  role           Role     @default(BOOKKEEPER)
+  organisationId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organisation   Organisation    @relation(fields: [organisationId], references: [id])
+  journalEntries JournalEntry[]  @relation("CreatedByUser")
+  voidedJournalEntries JournalEntry[] @relation("VoidedByUser")
+  voidedInvoices Invoice[]       @relation("InvoiceVoidedByUser")
+  passwordResetTokens PasswordResetToken[]
+  adminActionLogs AdminActionLog[]
+
+  @@index([organisationId])
+  @@map("users")
+}
+
+model Account {
+  id             String      @id @default(uuid())
+  organisationId String
+  name           String
+  type           AccountType
+  code           String
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organisation   Organisation      @relation(fields: [organisationId], references: [id])
+  journalLines   JournalLine[]
+
+  @@unique([organisationId, code])
+  @@index([organisationId])
+  @@map("accounts")
+}
+
+model JournalEntry {
+  id             String             @id @default(uuid())
+  organisationId String
+  date           DateTime
+  description    String
+  status         JournalEntryStatus @default(DRAFT)
+  createdById    String
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  // Void (posted entries only): original data/hash/chain position are
+  // never touched — voiding only sets these flag fields and posts a
+  // separate reversing entry.
+  voidedByUserId String?
+  voidedAt       DateTime?
+  voidReason     String?
+
+  // Set on the REVERSING entry, pointing back at the original entry it
+  // reverses. An original entry can be reversed at most once.
+  reversalOfEntryId String? @unique
+
+  organisation   Organisation   @relation(fields: [organisationId], references: [id])
+  createdBy      User           @relation("CreatedByUser", fields: [createdById], references: [id])
+  voidedByUser   User?          @relation("VoidedByUser", fields: [voidedByUserId], references: [id])
+  lines          JournalLine[]
+  invoices       Invoice[]
+
+  reversalOfEntry JournalEntry?  @relation("JournalEntryReversal", fields: [reversalOfEntryId], references: [id])
+  reversedByEntry JournalEntry?  @relation("JournalEntryReversal")
+
+  @@index([organisationId])
+  @@index([organisationId, date])
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id             String   @id @default(uuid())
+  journalEntryId String
+  accountId      String
+  debit          Decimal  @default(0) @db.Decimal(18, 2)
+  credit         Decimal  @default(0) @db.Decimal(18, 2)
+  memo           String?
+
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account        Account      @relation(fields: [accountId], references: [id])
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@map("journal_lines")
+}
+
+model Invoice {
+  id                   String        @id @default(uuid())
+  organisationId       String
+  customerName         String
+  lineItems            Json
+  amount               Decimal       @db.Decimal(18, 2)
+  status               InvoiceStatus @default(DRAFT)
+  dueDate              DateTime
+  relatedJournalEntryId String?      @unique
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  // Void (issued/paid invoices only): original data/amount/lineItems and
+  // hash-chain position are never touched — voiding only sets these flag
+  // fields and posts a separate reversing JournalEntry.
+  voidedByUserId String?
+  voidedAt       DateTime?
+  voidReason     String?
+
+  organisation         Organisation  @relation(fields: [organisationId], references: [id])
+  relatedJournalEntry   JournalEntry? @relation(fields: [relatedJournalEntryId], references: [id])
+  voidedByUser          User?         @relation("InvoiceVoidedByUser", fields: [voidedByUserId], references: [id])
+
+  @@index([organisationId])
+  @@map("invoices")
+}
+
+model LedgerChain {
+  id             String            @id @default(uuid())
+  organisationId String
+  recordType     LedgerRecordType
+  recordId       String
+  hash           String
+  previousHash   String?
+  checkpointId   String?
+  createdAt      DateTime          @default(now())
+
+  organisation   Organisation      @relation(fields: [organisationId], references: [id])
+  checkpoint     LedgerCheckpoint? @relation(fields: [checkpointId], references: [id])
+
+  @@index([organisationId, createdAt])
+  @@index([organisationId, checkpointId])
+  @@index([recordType, recordId])
+  @@index([checkpointId, createdAt])
+  @@map("ledger_chain")
+}
+
+model LedgerCheckpoint {
+  id             String   @id @default(uuid())
+  organisationId String
+  merkleRoot     String
+  signature      String
+  rangeStart     DateTime
+  rangeEnd       DateTime
+  createdAt      DateTime @default(now())
+
+  organisation   Organisation  @relation(fields: [organisationId], references: [id])
+  chainEntries   LedgerChain[]
+
+  @@index([organisationId, createdAt])
+  @@map("ledger_checkpoints")
+}
+
+/// Single-use, short-expiry password reset tokens. Only a SHA-256 hash of
+/// the token is ever stored (same principle as bcrypt-hashed passwords —
+/// the raw token is never persisted, only handed to the user once).
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+/// Generic audit trail for non-ledger administrative actions (e.g.
+/// deleting a draft journal entry or draft invoice, neither of which was
+/// ever hash-chained, so they can't appear in the LedgerChain-based
+/// /audit-log the way posted/voided records do).
+model AdminActionLog {
+  id             String   @id @default(uuid())
+  organisationId String
+  userId         String
+  action         String
+  targetType     String
+  targetId       String
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  user           User         @relation(fields: [userId], references: [id])
+
+  @@index([organisationId, createdAt])
+  @@map("admin_action_logs")
+}

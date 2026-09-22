@@ -1,0 +1,37 @@
+{
+  "name": "secureledger",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build:packages": "npm run generate --workspace=packages/db && npm run build --workspace=packages/db && npm run build --workspace=packages/crypto && npm run build --workspace=packages/ledger && npm run build --workspace=packages/verification",
+    "dev:web": "npm run build:packages && npm run dev --workspace=apps/web",
+    "dev:worker": "npm run build:packages && npm run dev --workspace=apps/checkpoint-worker",
+    "build": "npm run build:packages && npm run build --workspace=apps/web && npm run build --workspace=apps/checkpoint-worker",
+    "test": "npm run test --workspace=packages/crypto && npm run test --workspace=packages/ledger && npm run test --workspace=apps/checkpoint-worker",
+    "build:security-tests-deps": "npm run build:packages && npm run build --workspace=apps/checkpoint-worker",
+    "test:tamper-detection": "npm run build:security-tests-deps && npm run test:tamper-detection --workspace=apps/security-tests",
+    "test:concurrency-stress": "npm run build:security-tests-deps && npm run test:concurrency-stress --workspace=apps/security-tests",
+    "test:integration": "newman run tests/postman/secureledger.postman_collection.json -e tests/postman/secureledger.postman_environment.json --delay-request 50",
+    "test:e2e": "npm run test:e2e --workspace=apps/e2e-tests",
+    "benchmark": "ts-node scripts/benchmark.ts",
+    "prisma:generate": "npm run generate --workspace=packages/db",
+    "prisma:migrate": "npm run migrate --workspace=packages/db",
+    "prisma:migrate:dev": "npm run migrate:dev --workspace=packages/db -- --name init",
+    "prisma:studio": "npm run studio --workspace=packages/db",
+    "dev:db": "pglite-server -d ./.devdb/pgdata -p 5432"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-socket": "^0.2.11",
+    "newman": "^6.2.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  }
+}
