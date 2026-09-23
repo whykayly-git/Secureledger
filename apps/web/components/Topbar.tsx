@@ -15,7 +15,7 @@ export function Topbar({ session }: { session: ClientSession | null }) {
   }
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">
+    <header className="print:hidden flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">
       <div>
         <p className="text-sm font-bold text-slate-900">{session?.organisation.name ?? "…"}</p>
       </div>

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@secureledger/db";
 import { checkRateLimit, clientKeyFromRequest } from "@/lib/rateLimit";
 import { generateRawToken, hashResetToken, RESET_TOKEN_TTL_MS } from "@/lib/passwordReset";
+import { normalizeEmail } from "@/lib/auth";
 import { ApiError, handleApiError } from "@/lib/api";
 
 const GENERIC_MESSAGE = "If an account exists for that email, a password reset link has been generated.";
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
       throw new ApiError("email is required", 400);
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({ where: { email: normalizeEmail(email) } });
 
     let token = generateRawToken();
     if (user) {

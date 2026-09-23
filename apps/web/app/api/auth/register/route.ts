@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@secureledger/db";
-import { AUTH_COOKIE_NAME, hashPassword, signSessionToken } from "@/lib/auth";
+import { AUTH_COOKIE_NAME, hashPassword, normalizeEmail, signSessionToken } from "@/lib/auth";
 import { checkRateLimit, clientKeyFromRequest } from "@/lib/rateLimit";
 import { ApiError, handleApiError } from "@/lib/api";
 
@@ -20,8 +20,12 @@ export async function POST(request: Request) {
     if (typeof password !== "string" || password.length < 8) {
       throw new ApiError("Password must be at least 8 characters", 400);
     }
+    if (typeof email !== "string") {
+      throw new ApiError("A valid email is required", 400);
+    }
 
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = normalizeEmail(email);
+    const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (existing) {
       throw new ApiError("An account with this email already exists", 409);
     }
@@ -33,7 +37,7 @@ export async function POST(request: Request) {
       const user = await tx.user.create({
         data: {
           name,
-          email,
+          email: normalizedEmail,
           passwordHash,
           role: "ACCOUNTANT",
           organisationId: organisation.id,

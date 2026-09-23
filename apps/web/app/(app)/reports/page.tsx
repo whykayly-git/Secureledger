@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import { Card } from "@/components/Card";
 import { Table, THead, TBody, TH, TD } from "@/components/Table";
-import { formatCurrency } from "@/lib/format";
+import { ExportBar } from "@/components/ExportBar";
+import { formatCurrency, formatDate } from "@/lib/format";
+import type { ExportTable } from "@/lib/export";
+import { useSession } from "@/lib/useSession";
 
 type TrialBalanceRow = {
   accountId: string;
@@ -24,6 +27,7 @@ type IncomeStatement = {
 };
 
 export default function ReportsPage() {
+  const { session } = useSession();
   const [tab, setTab] = useState<"trial" | "income">("trial");
   const [trialBalance, setTrialBalance] = useState<{ rows: TrialBalanceRow[]; totals: { totalDebit: number; totalCredit: number } } | null>(null);
   const [incomeStatement, setIncomeStatement] = useState<IncomeStatement | null>(null);
@@ -37,23 +41,63 @@ export default function ReportsPage() {
       .then(setIncomeStatement);
   }, []);
 
+  const subtitle = `${session?.organisation.name ?? ""} — as of ${formatDate(new Date())}`;
+
+  function getTrialBalanceExportTable(): ExportTable {
+    return {
+      title: "Trial Balance",
+      subtitle,
+      columns: ["Code", "Account", "Type", "Debit", "Credit"],
+      rows: [
+        ...(trialBalance?.rows.map((r) => [
+          r.code,
+          r.name,
+          r.type,
+          r.totalDebit ? formatCurrency(r.totalDebit) : "—",
+          r.totalCredit ? formatCurrency(r.totalCredit) : "—",
+        ]) ?? []),
+        ["", "", "Total", formatCurrency(trialBalance?.totals.totalDebit ?? 0), formatCurrency(trialBalance?.totals.totalCredit ?? 0)],
+      ],
+      filename: `trial-balance-${new Date().toISOString().slice(0, 10)}`,
+    };
+  }
+
+  function getIncomeStatementExportTable(): ExportTable {
+    return {
+      title: "Income Statement",
+      subtitle,
+      columns: ["Section", "Account", "Amount"],
+      rows: [
+        ...(incomeStatement?.income.map((r) => ["Income", r.name, formatCurrency(r.amount)]) ?? []),
+        ["", "Total income", formatCurrency(incomeStatement?.totalIncome ?? 0)],
+        ...(incomeStatement?.expenses.map((r) => ["Expenses", r.name, formatCurrency(r.amount)]) ?? []),
+        ["", "Total expenses", formatCurrency(incomeStatement?.totalExpenses ?? 0)],
+        ["", "Net Income", formatCurrency(incomeStatement?.netIncome ?? 0)],
+      ],
+      filename: `income-statement-${new Date().toISOString().slice(0, 10)}`,
+    };
+  }
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-slate-900">Reports</h1>
 
-      <div className="flex gap-2">
-        <button
-          onClick={() => setTab("trial")}
-          className={`rounded-lg px-4 py-2 text-sm font-bold ${tab === "trial" ? "bg-primary text-white" : "bg-white text-slate-600 border border-slate-200"}`}
-        >
-          Trial Balance
-        </button>
-        <button
-          onClick={() => setTab("income")}
-          className={`rounded-lg px-4 py-2 text-sm font-bold ${tab === "income" ? "bg-primary text-white" : "bg-white text-slate-600 border border-slate-200"}`}
-        >
-          Income Statement
-        </button>
+      <div className="flex items-center justify-between">
+        <div className="print:hidden flex gap-2">
+          <button
+            onClick={() => setTab("trial")}
+            className={`rounded-lg px-4 py-2 text-sm font-bold ${tab === "trial" ? "bg-primary text-white" : "bg-white text-slate-600 border border-slate-200"}`}
+          >
+            Trial Balance
+          </button>
+          <button
+            onClick={() => setTab("income")}
+            className={`rounded-lg px-4 py-2 text-sm font-bold ${tab === "income" ? "bg-primary text-white" : "bg-white text-slate-600 border border-slate-200"}`}
+          >
+            Income Statement
+          </button>
+        </div>
+        <ExportBar getTable={tab === "trial" ? getTrialBalanceExportTable : getIncomeStatementExportTable} />
       </div>
 
       {tab === "trial" && (

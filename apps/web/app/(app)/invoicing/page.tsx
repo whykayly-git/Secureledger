@@ -1,12 +1,15 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { Modal } from "@/components/Modal";
 import { Table, THead, TBody, TH, TD, EmptyState, LoadingRows } from "@/components/Table";
 import { StatusBadge } from "@/components/Badge";
+import { ExportBar } from "@/components/ExportBar";
 import { formatCurrency, formatDate } from "@/lib/format";
+import type { ExportTable } from "@/lib/export";
 import { useSession } from "@/lib/useSession";
 
 type Account = { id: string; name: string; code: string; type: string };
@@ -71,6 +74,21 @@ export default function InvoicingPage() {
   const receivableAccounts = accounts.filter((a) => a.type === "ASSET");
   const incomeAccounts = accounts.filter((a) => a.type === "INCOME");
 
+  function getExportTable(): ExportTable {
+    return {
+      title: "Invoicing",
+      subtitle: `${session?.organisation.name ?? ""} — as of ${formatDate(new Date())}`,
+      columns: ["Customer", "Due Date", "Amount", "Status"],
+      rows: visibleInvoices.map((inv) => [
+        inv.customerName,
+        formatDate(inv.dueDate),
+        formatCurrency(Number(inv.amount)),
+        inv.status,
+      ]),
+      filename: `invoicing-${new Date().toISOString().slice(0, 10)}`,
+    };
+  }
+
   async function loadInvoices() {
     setLoading(true);
     const res = await fetch("/api/invoices");
@@ -79,12 +97,24 @@ export default function InvoicingPage() {
     setLoading(false);
   }
 
+  async function loadAccounts() {
+    const res = await fetch("/api/accounts");
+    const data = await res.json();
+    setAccounts(data.accounts ?? []);
+  }
+
   useEffect(() => {
     loadInvoices();
-    fetch("/api/accounts")
-      .then((r) => r.json())
-      .then((d) => setAccounts(d.accounts ?? []));
+    loadAccounts();
   }, []);
+
+  // Accounts are also fetched fresh every time the New Invoice modal opens
+  // — otherwise an income/receivable account created after this page first
+  // mounted (e.g. in another tab, or just moments ago on Chart of
+  // Accounts) wouldn't show up in these dropdowns until a full reload.
+  useEffect(() => {
+    if (modalOpen) loadAccounts();
+  }, [modalOpen]);
 
   const total = useMemo(() => items.reduce((s, i) => s + lineTotalFor(i), 0), [items]);
   const itemErrors = useMemo(() => validateItems(items), [items]);
@@ -218,7 +248,12 @@ export default function InvoicingPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-900">Invoicing</h1>
-        <Button onClick={() => setModalOpen(true)}>+ New Invoice</Button>
+        <div className="flex items-center gap-2">
+          <ExportBar getTable={getExportTable} />
+          <Button onClick={() => setModalOpen(true)} className="print:hidden">
+            + New Invoice
+          </Button>
+        </div>
       </div>
 
       {actionError && <p className="text-sm font-medium text-red-600">{actionError}</p>}
@@ -302,6 +337,19 @@ export default function InvoicingPage() {
       </Card>
 
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="New Invoice" size="lg">
+        {(receivableAccounts.length === 0 || incomeAccounts.length === 0) && (
+          <p className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
+            {receivableAccounts.length === 0 && incomeAccounts.length === 0
+              ? "You need at least one ASSET account (to receive payment into) and one INCOME account (to book revenue to) before you can create an invoice."
+              : receivableAccounts.length === 0
+                ? "You need at least one ASSET account (to receive payment into) before you can create an invoice."
+                : "You need at least one INCOME account (to book revenue to) before you can create an invoice."}{" "}
+            <Link href="/accounts" className="font-bold underline">
+              Add one in Chart of Accounts
+            </Link>
+            , then come back here.
+          </p>
+        )}
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>

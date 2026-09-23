@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@secureledger/db";
-import { AUTH_COOKIE_NAME, signSessionToken, verifyPassword } from "@/lib/auth";
+import { AUTH_COOKIE_NAME, normalizeEmail, signSessionToken, verifyPassword } from "@/lib/auth";
 import { checkRateLimit, clientKeyFromRequest } from "@/lib/rateLimit";
 import { ApiError, handleApiError } from "@/lib/api";
 
@@ -13,12 +13,12 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const { email, password } = body ?? {};
-    if (!email || !password) {
+    if (!email || typeof email !== "string" || !password) {
       throw new ApiError("email and password are required", 400);
     }
 
     const user = await prisma.user.findUnique({
-      where: { email },
+      where: { email: normalizeEmail(email) },
       include: { organisation: true },
     });
 

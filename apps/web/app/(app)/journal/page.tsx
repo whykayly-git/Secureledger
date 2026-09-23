@@ -7,7 +7,9 @@ import { Button } from "@/components/Button";
 import { Modal } from "@/components/Modal";
 import { Table, THead, TBody, TH, TD, EmptyState, LoadingRows } from "@/components/Table";
 import { StatusBadge } from "@/components/Badge";
+import { ExportBar } from "@/components/ExportBar";
 import { formatCurrency, formatDate, shortHash } from "@/lib/format";
+import type { ExportTable } from "@/lib/export";
 import { useSession } from "@/lib/useSession";
 
 type JournalEntry = {
@@ -44,6 +46,26 @@ export default function JournalPage() {
   }, []);
 
   const canManage = session?.user.role === "ACCOUNTANT" || session?.user.role === "AUDITOR";
+
+  function getExportTable(): ExportTable {
+    return {
+      title: "Journal Entries",
+      subtitle: `${session?.organisation.name ?? ""} — as of ${formatDate(new Date())}`,
+      columns: ["Date", "Description", "Created By", "Amount", "Status", "Hash"],
+      rows: entries.map((e) => {
+        const total = e.lines.reduce((s, l) => s + Number(l.debit), 0);
+        return [
+          formatDate(e.date),
+          e.description,
+          e.createdBy?.name ?? "",
+          formatCurrency(total),
+          e.status,
+          shortHash(e.chain?.hash),
+        ];
+      }),
+      filename: `journal-entries-${new Date().toISOString().slice(0, 10)}`,
+    };
+  }
 
   function canDelete(entry: JournalEntry): boolean {
     if (entry.status !== "DRAFT") return false;
@@ -97,9 +119,12 @@ export default function JournalPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-900">Journal Entries</h1>
-        <Link href="/journal/new">
-          <Button>+ New Entry</Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <ExportBar getTable={getExportTable} />
+          <Link href="/journal/new" className="print:hidden">
+            <Button>+ New Entry</Button>
+          </Link>
+        </div>
       </div>
 
       {actionError && <p className="text-sm font-medium text-red-600">{actionError}</p>}

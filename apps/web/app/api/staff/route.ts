@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@secureledger/db";
 import { requireSession, requireOrgAdmin } from "@/lib/session";
 import { ApiError, handleApiError } from "@/lib/api";
-import { hashPassword } from "@/lib/auth";
+import { hashPassword, normalizeEmail } from "@/lib/auth";
 import { generateTemporaryPassword } from "@/lib/tempPassword";
 import { logAdminAction } from "@/lib/void";
 
@@ -65,7 +65,8 @@ export async function POST(request: Request) {
       throw new ApiError("isOrgAdmin must be a boolean", 400);
     }
 
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = normalizeEmail(email);
+    const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (existing) {
       throw new ApiError("An account with this email already exists", 409);
     }
@@ -78,7 +79,7 @@ export async function POST(request: Request) {
         data: {
           organisationId: session.organisationId,
           name: name.trim(),
-          email,
+          email: normalizedEmail,
           passwordHash,
           role,
           isOrgAdmin: !!isOrgAdmin,

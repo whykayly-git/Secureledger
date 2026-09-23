@@ -6,6 +6,10 @@ import { Button } from "@/components/Button";
 import { Modal } from "@/components/Modal";
 import { Table, THead, TBody, TH, TD, EmptyState, LoadingRows } from "@/components/Table";
 import { Badge } from "@/components/Badge";
+import { ExportBar } from "@/components/ExportBar";
+import type { ExportTable } from "@/lib/export";
+import { formatDate } from "@/lib/format";
+import { useSession } from "@/lib/useSession";
 
 type Account = {
   id: string;
@@ -17,6 +21,7 @@ type Account = {
 const TYPES: Account["type"][] = ["ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE"];
 
 export default function AccountsPage() {
+  const { session } = useSession();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -69,11 +74,26 @@ export default function AccountsPage() {
     (g) => g.accounts.length > 0 || !typeFilter
   );
 
+  function getExportTable(): ExportTable {
+    return {
+      title: "Chart of Accounts",
+      subtitle: `${session?.organisation.name ?? ""} — as of ${formatDate(new Date())}`,
+      columns: ["Code", "Name", "Type"],
+      rows: grouped.flatMap((g) => g.accounts.map((a) => [a.code, a.name, a.type])),
+      filename: `chart-of-accounts-${new Date().toISOString().slice(0, 10)}`,
+    };
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-900">Chart of Accounts</h1>
-        <Button onClick={() => setModalOpen(true)}>+ New Account</Button>
+        <div className="flex items-center gap-2">
+          <ExportBar getTable={getExportTable} />
+          <Button onClick={() => setModalOpen(true)} className="print:hidden">
+            + New Account
+          </Button>
+        </div>
       </div>
 
       <Card>

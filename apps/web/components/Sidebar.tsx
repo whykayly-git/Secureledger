@@ -26,7 +26,7 @@ export function Sidebar({ session }: { session?: ClientSession | null }) {
     : BASE_NAV_ITEMS;
 
   return (
-    <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
+    <aside className="print:hidden hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
       <div className="flex h-16 items-center gap-2 border-b border-slate-200 px-6">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white font-bold">
           SL

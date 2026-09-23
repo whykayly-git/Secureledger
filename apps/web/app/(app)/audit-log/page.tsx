@@ -6,7 +6,9 @@ import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { Table, THead, TBody, TH, TD, EmptyState, LoadingRows } from "@/components/Table";
 import { Badge } from "@/components/Badge";
+import { ExportBar } from "@/components/ExportBar";
 import { formatDateTime, shortHash } from "@/lib/format";
+import type { ExportTable } from "@/lib/export";
 import { useSession } from "@/lib/useSession";
 
 type LedgerAuditEntry = {
@@ -48,15 +50,38 @@ export default function AuditLogPage() {
 
   const isAuditor = session?.user.role === "AUDITOR";
 
+  function getExportTable(): ExportTable {
+    return {
+      title: "Audit Log",
+      subtitle: `${session?.organisation.name ?? ""} — as of ${formatDateTime(new Date())}`,
+      columns: ["Timestamp", "Record Type", "Summary", "Hash", "Status"],
+      rows: entries.map((e) =>
+        e.kind === "STAFF"
+          ? [formatDateTime(e.createdAt), "Staff", e.summary, "—", "—"]
+          : [
+              formatDateTime(e.createdAt),
+              e.recordType.replace("_", " "),
+              e.summary,
+              shortHash(e.hash),
+              e.checkpointed ? "Checkpointed" : "Pending",
+            ]
+      ),
+      filename: `audit-log-${new Date().toISOString().slice(0, 10)}`,
+    };
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-900">Audit Log</h1>
-        {isAuditor && (
-          <a href="/api/audit-log/export">
-            <Button variant="secondary">Export batch verification (CSV)</Button>
-          </a>
-        )}
+        <div className="flex items-center gap-2">
+          <ExportBar getTable={getExportTable} />
+          {isAuditor && (
+            <a href="/api/audit-log/export" className="print:hidden">
+              <Button variant="secondary">Export batch verification (CSV)</Button>
+            </a>
+          )}
+        </div>
       </div>
 
       <Card>
