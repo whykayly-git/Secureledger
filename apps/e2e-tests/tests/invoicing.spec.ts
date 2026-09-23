@@ -17,13 +17,14 @@ test.describe("Invoicing", () => {
     await page.locator(fieldLocatorSelector("Customer name")).fill(customerName);
     await page.locator(fieldLocatorSelector("Receivable account")).selectOption(accounts.cashAccountId);
 
-    const lineItemRow = page.locator("div.grid.grid-cols-12.gap-2").first();
+    const lineItemRow = page.getByRole("row").filter({ has: page.getByPlaceholder("Description") }).first();
     await lineItemRow.getByPlaceholder("Description").fill("Consulting services");
     await lineItemRow.getByPlaceholder("Qty").fill("1");
-    await lineItemRow.getByPlaceholder("Unit price").fill("250");
+    await lineItemRow.getByPlaceholder("0.00").fill("250");
     await lineItemRow.locator("select").selectOption(accounts.incomeAccountId);
 
-    await expect(page.getByText("Total: $250.00")).toBeVisible();
+    await expect(lineItemRow.getByText("₦250.00")).toBeVisible();
+    await expect(page.getByText("Total: ₦250.00")).toBeVisible();
 
     await page.getByRole("button", { name: "Create draft invoice" }).click();
 

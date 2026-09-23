@@ -1,5 +1,5 @@
 import { ApiError } from "./api";
-import type { InvoiceLineItem } from "./invoiceTypes";
+import type { InvoiceLineItemInput } from "./invoiceTypes";
 
 export function toCents(value: number): number {
   return Math.round(value * 100);
@@ -51,7 +51,7 @@ export function validateInvoiceRequestShape(body: {
   }
 }
 
-export function validateInvoiceLineItemShape(item: InvoiceLineItem) {
+export function validateInvoiceLineItemShape(item: InvoiceLineItemInput) {
   if (!item.description || !(item.quantity > 0) || !(item.unitPrice >= 0)) {
     throw new ApiError("Each line item needs a description, positive quantity and non-negative unit price", 400);
   }

@@ -25,6 +25,24 @@ function emptyItem(): ItemDraft {
   return { description: "", quantity: "1", unitPrice: "", incomeAccountId: "" };
 }
 
+function lineTotalFor(item: ItemDraft): number {
+  return (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0);
+}
+
+/** One combined message per row, or no entry at all if that row is valid. */
+function validateItems(items: ItemDraft[]): Record<number, string> {
+  const errors: Record<number, string> = {};
+  items.forEach((item, i) => {
+    const issues: string[] = [];
+    if (!item.description.trim()) issues.push("Description is required");
+    if (!(Number(item.quantity) > 0)) issues.push("Quantity must be greater than 0");
+    if (item.unitPrice.trim() === "" || !(Number(item.unitPrice) >= 0)) issues.push("Unit price must be 0 or more");
+    if (!item.incomeAccountId) issues.push("Income account is required");
+    if (issues.length > 0) errors[i] = issues.join(" · ");
+  });
+  return errors;
+}
+
 export default function InvoicingPage() {
   const { session } = useSession();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -41,6 +59,7 @@ export default function InvoicingPage() {
   const [dueDate, setDueDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [receivableAccountId, setReceivableAccountId] = useState("");
   const [items, setItems] = useState<ItemDraft[]>([emptyItem()]);
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -67,17 +86,28 @@ export default function InvoicingPage() {
       .then((d) => setAccounts(d.accounts ?? []));
   }, []);
 
-  const total = useMemo(
-    () => items.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.unitPrice) || 0), 0),
-    [items]
-  );
+  const total = useMemo(() => items.reduce((s, i) => s + lineTotalFor(i), 0), [items]);
+  const itemErrors = useMemo(() => validateItems(items), [items]);
 
   function updateItem(i: number, patch: Partial<ItemDraft>) {
     setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
   }
 
+  function addItem() {
+    setItems((prev) => [...prev, emptyItem()]);
+  }
+
+  function removeItem(i: number) {
+    setItems((prev) => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
+    setAttemptedSubmit(true);
+    if (Object.keys(itemErrors).length > 0) {
+      setError("Fix the highlighted line items before continuing.");
+      return;
+    }
     setError(null);
     setSaving(true);
     try {
@@ -102,6 +132,7 @@ export default function InvoicingPage() {
       setCustomerName("");
       setReceivableAccountId("");
       setItems([emptyItem()]);
+      setAttemptedSubmit(false);
       loadInvoices();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create invoice");
@@ -270,7 +301,7 @@ export default function InvoicingPage() {
         </Table>
       </Card>
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="New Invoice">
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="New Invoice" size="lg">
         <form onSubmit={handleCreate} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -312,53 +343,92 @@ export default function InvoicingPage() {
 
           <div className="space-y-2">
             <label className="block text-sm font-bold text-slate-700">Line items</label>
-            {items.map((item, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2">
-                <input
-                  required
-                  placeholder="Description"
-                  value={item.description}
-                  onChange={(e) => updateItem(i, { description: e.target.value })}
-                  className="col-span-4 rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                />
-                <input
-                  type="number"
-                  min="1"
-                  placeholder="Qty"
-                  value={item.quantity}
-                  onChange={(e) => updateItem(i, { quantity: e.target.value })}
-                  className="col-span-2 rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                />
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="Unit price"
-                  value={item.unitPrice}
-                  onChange={(e) => updateItem(i, { unitPrice: e.target.value })}
-                  className="col-span-2 rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                />
-                <select
-                  required
-                  value={item.incomeAccountId}
-                  onChange={(e) => updateItem(i, { incomeAccountId: e.target.value })}
-                  className="col-span-4 rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                >
-                  <option value="">Income account…</option>
-                  {incomeAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={() => setItems((prev) => [...prev, emptyItem()])}
-              className="text-sm font-bold text-primary hover:underline"
-            >
-              + Add line item
+            <Table>
+              <THead>
+                <tr>
+                  <TH>Description</TH>
+                  <TH className="text-right">Qty</TH>
+                  <TH className="text-right">Unit Price (₦)</TH>
+                  <TH className="text-right">Line Total</TH>
+                  <TH>Income account</TH>
+                  <TH></TH>
+                </tr>
+              </THead>
+              <TBody>
+                {items.map((item, i) => (
+                  <tr key={i}>
+                    <TD>
+                      <input
+                        placeholder="Description"
+                        value={item.description}
+                        onChange={(e) => updateItem(i, { description: e.target.value })}
+                        className="w-full min-w-[10rem] rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </TD>
+                    <TD className="text-right">
+                      <input
+                        type="number"
+                        step="any"
+                        placeholder="Qty"
+                        value={item.quantity}
+                        onChange={(e) => updateItem(i, { quantity: e.target.value })}
+                        className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-right text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </TD>
+                    <TD className="text-right">
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={item.unitPrice}
+                        onChange={(e) => updateItem(i, { unitPrice: e.target.value })}
+                        className="w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-right text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </TD>
+                    <TD className="whitespace-nowrap text-right font-medium text-slate-700">
+                      {formatCurrency(lineTotalFor(item))}
+                    </TD>
+                    <TD>
+                      <select
+                        value={item.incomeAccountId}
+                        onChange={(e) => updateItem(i, { incomeAccountId: e.target.value })}
+                        className="w-full min-w-[9rem] rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                      >
+                        <option value="">Income account…</option>
+                        {incomeAccounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.code} — {a.name}
+                          </option>
+                        ))}
+                      </select>
+                    </TD>
+                    <TD>
+                      {items.length > 1 && (
+                        <button
+                          type="button"
+                          aria-label={`Remove line ${i + 1}`}
+                          onClick={() => removeItem(i)}
+                          className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                        >
+                          🗑
+                        </button>
+                      )}
+                    </TD>
+                  </tr>
+                ))}
+              </TBody>
+            </Table>
+            {attemptedSubmit && Object.keys(itemErrors).length > 0 && (
+              <ul className="space-y-0.5 rounded-lg bg-red-50 px-4 py-2 text-xs font-medium text-red-700">
+                {Object.entries(itemErrors).map(([idx, message]) => (
+                  <li key={idx}>
+                    Line {Number(idx) + 1}: {message}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button type="button" onClick={addItem} className="text-sm font-bold text-primary hover:underline">
+              + Add Line
             </button>
           </div>
 

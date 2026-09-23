@@ -1,5 +1,18 @@
+/**
+ * Naira symbol is prefixed manually rather than via Intl's
+ * `{ style: "currency", currency: "NGN" }` — that depends on the runtime's
+ * ICU currency-display data actually resolving NGN to "₦" (some
+ * environments fall back to the "NGN" code instead). Using Intl only for
+ * the number grouping/decimals and prefixing "₦" ourselves guarantees the
+ * symbol regardless of runtime ICU data.
+ */
 export function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
+  const isNegative = value < 0;
+  const formatted = new Intl.NumberFormat("en-NG", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Math.abs(value));
+  return `${isNegative ? "-" : ""}₦${formatted}`;
 }
 
 export function formatDate(value: string | Date): string {

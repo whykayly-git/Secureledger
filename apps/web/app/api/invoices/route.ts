@@ -3,7 +3,7 @@ import { prisma } from "@secureledger/db";
 import { requireSession } from "@/lib/session";
 import { ApiError, handleApiError } from "@/lib/api";
 import { appendLedgerChainEntry, invoiceHashFields } from "@secureledger/ledger";
-import { computeInvoiceAmount, InvoiceLineItem } from "@/lib/invoiceTypes";
+import { computeInvoiceAmount, withLineTotals, InvoiceLineItemInput } from "@/lib/invoiceTypes";
 import { validateInvoiceRequestShape, validateInvoiceLineItemShape } from "@/lib/validation";
 
 export async function GET(request: Request) {
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
       throw new ApiError("receivableAccountId must reference an ASSET account in your chart of accounts", 400);
     }
 
-    const incomeAccountIds: string[] = [...new Set<string>(items.map((i: InvoiceLineItem) => i.incomeAccountId))];
+    const incomeAccountIds: string[] = [...new Set<string>(items.map((i: InvoiceLineItemInput) => i.incomeAccountId))];
     const incomeAccounts = await prisma.account.findMany({
       where: { id: { in: incomeAccountIds }, organisationId: session.organisationId, type: "INCOME" },
     });
@@ -65,12 +65,12 @@ export async function POST(request: Request) {
       throw new ApiError("Every line item must reference an INCOME account in your chart of accounts", 400);
     }
 
-    for (const item of items as InvoiceLineItem[]) {
+    for (const item of items as InvoiceLineItemInput[]) {
       validateInvoiceLineItemShape(item);
     }
 
     const amount = computeInvoiceAmount(items);
-    const lineItems = { items, receivableAccountId };
+    const lineItems = { items: withLineTotals(items), receivableAccountId };
 
     const invoice = await prisma.$transaction(async (tx) => {
       const created = await tx.invoice.create({
