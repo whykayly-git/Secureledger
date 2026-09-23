@@ -19,6 +19,7 @@ type VerificationResult = {
   message?: string;
   inclusionValid?: boolean;
   signatureValid?: boolean;
+  failureReason?: "hash_mismatch" | "chain_link_broken" | "merkle_inclusion_invalid" | "signature_invalid" | null;
   leafIndex?: number;
   proof?: ProofStep[];
   checkpoint?: {
@@ -38,6 +39,16 @@ type VerificationResult = {
     isReversingEntry: boolean;
     reversalOfEntryId: string | null;
   };
+};
+
+const FAILURE_REASON_MESSAGES: Record<string, string> = {
+  hash_mismatch:
+    "The record's data no longer matches what was hash-chained at write time — the underlying row has been altered since it was posted.",
+  chain_link_broken:
+    "This record's link to the previous entry in the chain doesn't match the actual prior record — the chain has been broken or forged.",
+  merkle_inclusion_invalid:
+    "The stored hash does not reconstruct to its checkpoint's signed Merkle root.",
+  signature_invalid: "The checkpoint's signature does not validate against the checkpoint service's public key.",
 };
 
 function VerificationForm() {
@@ -127,6 +138,12 @@ function VerificationForm() {
           {result.verdict === "pending" && (
             <p className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
               {result.message ?? "This record has not yet been included in a checkpoint."}
+            </p>
+          )}
+
+          {result.verdict === "failed" && result.failureReason && (
+            <p className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+              {FAILURE_REASON_MESSAGES[result.failureReason]}
             </p>
           )}
 

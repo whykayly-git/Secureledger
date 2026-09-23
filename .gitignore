@@ -16,3 +16,4 @@ packages/db/generated/
 apps/e2e-tests/playwright-report/
 apps/e2e-tests/test-results/
 apps/e2e-tests/playwright/.auth/
+apps/security-tests/.suite-results/

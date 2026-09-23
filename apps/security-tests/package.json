@@ -5,6 +5,7 @@
   "scripts": {
     "test": "jest --runInBand",
     "test:tamper-detection": "ts-node src/runTamperSuite.ts",
+    "test:category-suite": "bash run-category-suite.sh",
     "test:concurrency-stress": "ts-node src/runConcurrencyStressSuite.ts"
   },
   "dependencies": {

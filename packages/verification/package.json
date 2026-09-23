@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@secureledger/crypto": "*",
-    "@secureledger/db": "*"
+    "@secureledger/db": "*",
+    "@secureledger/ledger": "*"
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",

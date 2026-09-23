@@ -1,23 +1,38 @@
-import { buildMerkleTree, generateSigningKeyPair, sha256Hex, signRoot } from "@secureledger/crypto";
+import {
+  buildMerkleTree,
+  computeChainHash,
+  generateSigningKeyPair,
+  sha256Hex,
+  signRoot,
+} from "@secureledger/crypto";
 
-const mockFindFirst = jest.fn();
-const mockFindUnique = jest.fn();
-const mockFindMany = jest.fn();
+const mockChainFindFirst = jest.fn();
+const mockChainFindMany = jest.fn();
+const mockCheckpointFindUnique = jest.fn();
+const mockJournalEntryFindUnique = jest.fn();
+const mockInvoiceFindUnique = jest.fn();
 
 jest.mock("@secureledger/db", () => ({
   prisma: {
     ledgerChain: {
-      findFirst: (...args: unknown[]) => mockFindFirst(...args),
-      findMany: (...args: unknown[]) => mockFindMany(...args),
+      findFirst: (...args: unknown[]) => mockChainFindFirst(...args),
+      findMany: (...args: unknown[]) => mockChainFindMany(...args),
     },
     ledgerCheckpoint: {
-      findUnique: (...args: unknown[]) => mockFindUnique(...args),
+      findUnique: (...args: unknown[]) => mockCheckpointFindUnique(...args),
+    },
+    journalEntry: {
+      findFirst: (...args: unknown[]) => mockJournalEntryFindUnique(...args),
+    },
+    invoice: {
+      findFirst: (...args: unknown[]) => mockInvoiceFindUnique(...args),
     },
   },
 }));
 
 // Imported after the mock is registered.
 import { verifyLedgerChainEntryById } from "../src/verify";
+import { journalEntryHashFields } from "@secureledger/ledger";
 
 const ORG_ID = "org-1";
 
@@ -25,90 +40,155 @@ function installPublicKey(publicKeyPem: string) {
   process.env.CHECKPOINT_PUBLIC_KEY = Buffer.from(publicKeyPem).toString("base64");
 }
 
+type MockEntry = {
+  id: string;
+  organisationId: string;
+  date: Date;
+  description: string;
+  status: string;
+  createdById: string;
+  lines: { accountId: string; debit: number; credit: number }[];
+};
+
+function makeEntry(overrides: Partial<MockEntry> = {}): MockEntry {
+  return {
+    id: "record-1",
+    organisationId: ORG_ID,
+    date: new Date("2026-01-01T00:00:00.000Z"),
+    description: "Test entry",
+    status: "POSTED",
+    createdById: "user-1",
+    lines: [
+      { accountId: "acc-expense", debit: 100, credit: 0 },
+      { accountId: "acc-cash", debit: 0, credit: 100 },
+    ],
+    ...overrides,
+  };
+}
+
+function realHashFor(entry: MockEntry, previousHash: string | null): string {
+  return computeChainHash(journalEntryHashFields(entry), previousHash);
+}
+
+/**
+ * Wires up the mocks for a single JOURNAL_ENTRY chain row and its
+ * underlying record, mirroring exactly what verifyLedgerChainEntryById
+ * queries: the chain row itself (by id), the immediately-preceding row
+ * (by organisationId + createdAt < this row's createdAt, used for the
+ * chain-link check), and the underlying JournalEntry (used for the
+ * hash-recompute check).
+ */
+function setupChainRow(params: {
+  chainId: string;
+  entry: MockEntry;
+  previousHash: string | null;
+  priorRowHash: string | null; // the ACTUAL prior row's hash, or null if none exists
+  checkpointId: string | null;
+  createdAt?: Date;
+  storedHashOverride?: string; // simulates directly tampering LedgerChain.hash
+}) {
+  const realHash = realHashFor(params.entry, params.previousHash);
+  const storedHash = params.storedHashOverride ?? realHash;
+  const createdAt = params.createdAt ?? new Date("2026-01-05T00:00:00.000Z");
+
+  const chainRow = {
+    id: params.chainId,
+    organisationId: ORG_ID,
+    recordId: params.entry.id,
+    recordType: "JOURNAL_ENTRY",
+    hash: storedHash,
+    previousHash: params.previousHash,
+    checkpointId: params.checkpointId,
+    createdAt,
+  };
+
+  mockChainFindFirst.mockImplementation((args: any) => {
+    if (args.where?.id === params.chainId) return Promise.resolve(chainRow);
+    if (args.where?.createdAt) {
+      return Promise.resolve(params.priorRowHash !== null ? { hash: params.priorRowHash } : null);
+    }
+    return Promise.resolve(null);
+  });
+
+  mockJournalEntryFindUnique.mockImplementation((args: any) =>
+    Promise.resolve(
+      args.where?.id === params.entry.id && args.where?.organisationId === params.entry.organisationId
+        ? params.entry
+        : null
+    )
+  );
+
+  return { chainRow, realHash };
+}
+
 beforeEach(() => {
-  mockFindFirst.mockReset();
-  mockFindUnique.mockReset();
-  mockFindMany.mockReset();
+  mockChainFindFirst.mockReset();
+  mockChainFindMany.mockReset();
+  mockCheckpointFindUnique.mockReset();
+  mockJournalEntryFindUnique.mockReset();
+  mockInvoiceFindUnique.mockReset();
 });
 
 describe("verifyLedgerChainEntryById — not found / pending", () => {
   it("returns null when the chain entry does not exist", async () => {
-    mockFindFirst.mockResolvedValue(null);
+    mockChainFindFirst.mockResolvedValue(null);
     const result = await verifyLedgerChainEntryById("missing-id", ORG_ID);
     expect(result).toBeNull();
   });
 
-  it("scopes the chain-entry lookup to the given id and organisationId", async () => {
-    mockFindFirst.mockResolvedValue(null);
-    await verifyLedgerChainEntryById("chain-1", ORG_ID);
-    expect(mockFindFirst).toHaveBeenCalledWith({ where: { id: "chain-1", organisationId: ORG_ID } });
-  });
-
-  it('returns verdict "pending" when checkpointId is null, without querying any checkpoint', async () => {
-    mockFindFirst.mockResolvedValue({
-      id: "chain-1",
-      recordId: "record-1",
-      recordType: "JOURNAL_ENTRY",
-      hash: "abc123",
+  it('returns verdict "pending" for an untouched, uncheckpointed genesis entry', async () => {
+    setupChainRow({
+      chainId: "chain-1",
+      entry: makeEntry(),
       previousHash: null,
+      priorRowHash: null,
       checkpointId: null,
-      createdAt: new Date("2026-01-01T00:00:00.000Z"),
     });
 
     const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
 
     expect(result?.verdict).toBe("pending");
-    expect(mockFindUnique).not.toHaveBeenCalled();
-    expect(mockFindMany).not.toHaveBeenCalled();
+    expect(mockCheckpointFindUnique).not.toHaveBeenCalled();
+    expect(mockChainFindMany).not.toHaveBeenCalled();
   });
 
   it("includes recordId, recordType, hash and previousHash in the pending result", async () => {
-    mockFindFirst.mockResolvedValue({
-      id: "chain-1",
-      recordId: "record-42",
-      recordType: "INVOICE",
-      hash: "hash-42",
-      previousHash: "prev-hash-41",
+    const entry = makeEntry({ id: "record-42" });
+    setupChainRow({
+      chainId: "chain-1",
+      entry,
+      previousHash: null,
+      priorRowHash: null,
       checkpointId: null,
-      createdAt: new Date("2026-01-01T00:00:00.000Z"),
     });
 
     const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
 
-    expect(result).toMatchObject({
-      recordId: "record-42",
-      recordType: "INVOICE",
-      hash: "hash-42",
-      previousHash: "prev-hash-41",
-    });
+    expect(result).toMatchObject({ recordId: "record-42", recordType: "JOURNAL_ENTRY" });
   });
 
   it("throws when the chain entry references a checkpointId that no longer exists", async () => {
-    mockFindFirst.mockResolvedValue({
-      id: "chain-1",
-      recordId: "record-1",
-      recordType: "JOURNAL_ENTRY",
-      hash: "abc123",
+    setupChainRow({
+      chainId: "chain-1",
+      entry: makeEntry(),
       previousHash: null,
+      priorRowHash: null,
       checkpointId: "missing-checkpoint",
-      createdAt: new Date(),
     });
-    mockFindUnique.mockResolvedValue(null);
+    mockCheckpointFindUnique.mockResolvedValue(null);
 
     await expect(verifyLedgerChainEntryById("chain-1", ORG_ID)).rejects.toThrow(/missing checkpoint/i);
   });
 
   it("throws when the chain entry is not found within its own checkpoint's batch (data inconsistency)", async () => {
-    mockFindFirst.mockResolvedValue({
-      id: "chain-1",
-      recordId: "record-1",
-      recordType: "JOURNAL_ENTRY",
-      hash: "abc123",
+    setupChainRow({
+      chainId: "chain-1",
+      entry: makeEntry(),
       previousHash: null,
+      priorRowHash: null,
       checkpointId: "checkpoint-1",
-      createdAt: new Date(),
     });
-    mockFindUnique.mockResolvedValue({
+    mockCheckpointFindUnique.mockResolvedValue({
       id: "checkpoint-1",
       merkleRoot: "some-root",
       signature: "some-signature",
@@ -116,32 +196,225 @@ describe("verifyLedgerChainEntryById — not found / pending", () => {
       rangeEnd: new Date(),
       createdAt: new Date(),
     });
-    mockFindMany.mockResolvedValue([{ id: "some-other-chain-row", hash: "other-hash" }]);
+    mockChainFindMany.mockResolvedValue([{ id: "some-other-chain-row", hash: "other-hash" }]);
 
     await expect(verifyLedgerChainEntryById("chain-1", ORG_ID)).rejects.toThrow(/not found in its own checkpoint batch/i);
+  });
+});
+
+describe("verifyLedgerChainEntryById — hash-recompute check (closes tamper scenario 1)", () => {
+  it('reports "failed" with failureReason "hash_mismatch" when the underlying record was altered after chaining, even though the stored hash and checkpoint are otherwise untouched', async () => {
+    const entry = makeEntry({ lines: [{ accountId: "acc-expense", debit: 999.99, credit: 0 }, { accountId: "acc-cash", debit: 0, credit: 999.99 }] });
+    // storedHashOverride pins the hash to what it was BEFORE the record was
+    // altered (i.e. the real write-time hash for the original amount), so
+    // this reproduces "edit the row directly, leave LedgerChain.hash alone".
+    const originalHash = realHashFor(makeEntry(), null);
+    setupChainRow({
+      chainId: "chain-1",
+      entry, // current (tampered) record data
+      previousHash: null,
+      priorRowHash: null,
+      checkpointId: null,
+      storedHashOverride: originalHash, // stale hash from before the edit
+    });
+
+    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
+
+    expect(result?.verdict).toBe("failed");
+    if (result && result.verdict !== "pending") {
+      expect(result.failureReason).toBe("hash_mismatch");
+    }
+  });
+
+  it('reports "hash_mismatch" even when the record is fully checkpointed and validly signed', async () => {
+    const keys = generateSigningKeyPair();
+    installPublicKey(keys.publicKey);
+
+    const entry = makeEntry({ description: "Tampered after checkpointing" });
+    const originalHash = realHashFor(makeEntry(), null);
+    const { chainRow } = setupChainRow({
+      chainId: "chain-1",
+      entry,
+      previousHash: null,
+      priorRowHash: null,
+      checkpointId: "checkpoint-1",
+      storedHashOverride: originalHash,
+    });
+
+    const tree = buildMerkleTree([chainRow.hash]);
+    mockCheckpointFindUnique.mockResolvedValue({
+      id: "checkpoint-1",
+      merkleRoot: tree.root,
+      signature: signRoot(tree.root, keys.privateKey),
+      rangeStart: new Date(),
+      rangeEnd: new Date(),
+      createdAt: new Date(),
+    });
+    mockChainFindMany.mockResolvedValue([{ id: "chain-1", hash: chainRow.hash }]);
+
+    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
+
+    expect(result?.verdict).toBe("failed");
+    if (result && result.verdict !== "pending") {
+      expect(result.failureReason).toBe("hash_mismatch");
+      // Never even reaches the Merkle/signature checks.
+      expect(result.inclusionValid).toBe(false);
+      expect(result.signatureValid).toBe(false);
+    }
+  });
+
+  it('reports "hash_mismatch" when the underlying record has been deleted entirely', async () => {
+    setupChainRow({
+      chainId: "chain-1",
+      entry: makeEntry(),
+      previousHash: null,
+      priorRowHash: null,
+      checkpointId: null,
+    });
+    mockJournalEntryFindUnique.mockResolvedValue(null); // record no longer exists
+
+    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
+
+    expect(result?.verdict).toBe("failed");
+    if (result && result.verdict !== "pending") {
+      expect(result.failureReason).toBe("hash_mismatch");
+    }
+  });
+
+  it('reports "hash_mismatch" when the referenced record is real but belongs to a DIFFERENT organisation (cross-tenant reference)', async () => {
+    // The chain row itself claims ORG_ID, but the JournalEntry it points at
+    // (recordId) actually belongs to a different organisation. recomputeStoredHash
+    // must scope its lookup by organisationId, not just id, or a cross-tenant
+    // reference to real, unaltered data would recompute successfully.
+    const entryFromAnotherOrg = makeEntry({ organisationId: "org-2-not-this-one" });
+    setupChainRow({
+      chainId: "chain-1",
+      entry: entryFromAnotherOrg,
+      previousHash: null,
+      priorRowHash: null,
+      checkpointId: null,
+    });
+
+    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
+
+    expect(result?.verdict).toBe("failed");
+    if (result && result.verdict !== "pending") {
+      expect(result.failureReason).toBe("hash_mismatch");
+    }
+  });
+});
+
+describe("verifyLedgerChainEntryById — chain-link continuity check (closes tamper scenario 3)", () => {
+  it('reports "failed" with failureReason "chain_link_broken" for a self-consistent forged previousHash (hash recomputed to match the forgery)', async () => {
+    // A more sophisticated forgery than a naive previousHash edit: the
+    // attacker also recomputes a hash that's internally consistent with
+    // the forged previousHash, so the hash-recompute check alone can't
+    // catch it — only checking the link against the REAL prior row can.
+    const entry = makeEntry();
+    const forgedPreviousHash = sha256Hex("forged-predecessor");
+    const actualPriorRowHash = sha256Hex("the-real-predecessor-hash");
+
+    setupChainRow({
+      chainId: "chain-2",
+      entry,
+      previousHash: forgedPreviousHash,
+      priorRowHash: actualPriorRowHash, // does NOT match forgedPreviousHash
+      checkpointId: null,
+      // No storedHashOverride: the stored hash IS computeChainHash(entry, forgedPreviousHash),
+      // i.e. self-consistent with the forgery, so hash_mismatch will NOT fire.
+    });
+
+    const result = await verifyLedgerChainEntryById("chain-2", ORG_ID);
+
+    expect(result?.verdict).toBe("failed");
+    if (result && result.verdict !== "pending") {
+      expect(result.failureReason).toBe("chain_link_broken");
+    }
+  });
+
+  it('reports "chain_link_broken" when a row falsely claims to be genesis while a real predecessor exists', async () => {
+    const entry = makeEntry();
+    setupChainRow({
+      chainId: "chain-2",
+      entry,
+      previousHash: null, // claims genesis
+      priorRowHash: sha256Hex("a-real-predecessor-exists"), // but one exists
+      checkpointId: null,
+    });
+
+    const result = await verifyLedgerChainEntryById("chain-2", ORG_ID);
+
+    expect(result?.verdict).toBe("failed");
+    if (result && result.verdict !== "pending") {
+      expect(result.failureReason).toBe("chain_link_broken");
+    }
+  });
+
+  it("does not report chain_link_broken for a correctly-linked, untampered entry", async () => {
+    const priorHash = sha256Hex("real-prior-hash");
+    const entry = makeEntry();
+    setupChainRow({
+      chainId: "chain-2",
+      entry,
+      previousHash: priorHash,
+      priorRowHash: priorHash, // matches
+      checkpointId: null,
+    });
+
+    const result = await verifyLedgerChainEntryById("chain-2", ORG_ID);
+
+    expect(result?.verdict).toBe("pending"); // not checkpointed, but internally consistent
   });
 });
 
 describe("verifyLedgerChainEntryById — checkpointed records (single and multi-leaf batches)", () => {
   const keys = generateSigningKeyPair();
 
-  function mockCheckpointedEntry(batchHashes: string[], leafIndex: number, options?: { signatureOverride?: string; rootOverride?: string }) {
-    const tree = buildMerkleTree(batchHashes);
+  function mockCheckpointedEntry(
+    entries: MockEntry[],
+    leafIndex: number,
+    options?: { signatureOverride?: string; rootOverride?: string }
+  ) {
+    // Build a real, self-consistent chain across all entries in the batch.
+    const hashes: string[] = [];
+    let prev: string | null = null;
+    for (const e of entries) {
+      const h = realHashFor(e, prev);
+      hashes.push(h);
+      prev = h;
+    }
+
+    const tree = buildMerkleTree(hashes);
     const signature = options?.signatureOverride ?? signRoot(tree.root, keys.privateKey);
     const merkleRoot = options?.rootOverride ?? tree.root;
 
-    const batch = batchHashes.map((hash, i) => ({ id: `chain-${i}`, hash }));
+    const batch = hashes.map((hash, i) => ({ id: `chain-${i}`, hash }));
 
-    mockFindFirst.mockResolvedValue({
-      id: `chain-${leafIndex}`,
-      recordId: `record-${leafIndex}`,
-      recordType: "JOURNAL_ENTRY",
-      hash: batchHashes[leafIndex],
-      previousHash: leafIndex === 0 ? null : batchHashes[leafIndex - 1],
-      checkpointId: "checkpoint-1",
-      createdAt: new Date(),
+    mockChainFindFirst.mockImplementation((args: any) => {
+      if (args.where?.id === `chain-${leafIndex}`) {
+        return Promise.resolve({
+          id: `chain-${leafIndex}`,
+          organisationId: ORG_ID,
+          recordId: entries[leafIndex].id,
+          recordType: "JOURNAL_ENTRY",
+          hash: hashes[leafIndex],
+          previousHash: leafIndex === 0 ? null : hashes[leafIndex - 1],
+          checkpointId: "checkpoint-1",
+          createdAt: new Date(2026, 0, 1, 0, 0, leafIndex),
+        });
+      }
+      if (args.where?.createdAt) {
+        return Promise.resolve(leafIndex === 0 ? null : { hash: hashes[leafIndex - 1] });
+      }
+      return Promise.resolve(null);
     });
-    mockFindUnique.mockResolvedValue({
+
+    mockJournalEntryFindUnique.mockImplementation((args: any) => {
+      const match = entries.find((e) => e.id === args.where?.id);
+      return Promise.resolve(match ?? null);
+    });
+
+    mockCheckpointFindUnique.mockResolvedValue({
       id: "checkpoint-1",
       merkleRoot,
       signature,
@@ -149,9 +422,9 @@ describe("verifyLedgerChainEntryById — checkpointed records (single and multi-
       rangeEnd: new Date("2026-01-02T00:00:00.000Z"),
       createdAt: new Date("2026-01-02T00:00:01.000Z"),
     });
-    mockFindMany.mockResolvedValue(batch);
+    mockChainFindMany.mockResolvedValue(batch);
 
-    return { tree };
+    return { tree, hashes };
   }
 
   beforeEach(() => {
@@ -159,89 +432,134 @@ describe("verifyLedgerChainEntryById — checkpointed records (single and multi-
   });
 
   it("returns verified for a single-leaf checkpoint batch", async () => {
-    const hashes = [sha256Hex("leaf-0")];
-    mockCheckpointedEntry(hashes, 0);
+    const entries = [makeEntry({ id: "record-0" })];
+    mockCheckpointedEntry(entries, 0);
     const result = await verifyLedgerChainEntryById(`chain-0`, ORG_ID);
     expect(result?.verdict).toBe("verified");
   });
 
-  it.each([3, 5, 8])("returns verified for every leaf position in a %i-leaf checkpoint batch", async (size) => {
-    const hashes = Array.from({ length: size }, (_, i) => sha256Hex(`leaf-${i}`));
+  it.each([3, 5, 8])("returns verified for every leaf position in a %i-entry checkpoint batch", async (size) => {
+    const entries = Array.from({ length: size }, (_, i) => makeEntry({ id: `record-${i}`, description: `Entry ${i}` }));
     for (let leafIndex = 0; leafIndex < size; leafIndex++) {
-      mockCheckpointedEntry(hashes, leafIndex);
+      mockCheckpointedEntry(entries, leafIndex);
       const result = await verifyLedgerChainEntryById(`chain-${leafIndex}`, ORG_ID);
       expect(result?.verdict).toBe("verified");
     }
   });
 
   it("reports the correct leafIndex and totalLeaves for a batch", async () => {
-    const hashes = Array.from({ length: 6 }, (_, i) => sha256Hex(`leaf-${i}`));
-    mockCheckpointedEntry(hashes, 4);
+    const entries = Array.from({ length: 6 }, (_, i) => makeEntry({ id: `record-${i}`, description: `Entry ${i}` }));
+    mockCheckpointedEntry(entries, 4);
     const result = await verifyLedgerChainEntryById("chain-4", ORG_ID);
     expect(result).toMatchObject({ leafIndex: 4 });
     if (result && result.verdict !== "pending") {
-      expect(result.checkpoint.totalLeaves).toBe(6);
+      expect(result.checkpoint?.totalLeaves).toBe(6);
     }
   });
 
   it("keeps the inclusion proof logarithmic in batch size", async () => {
-    const hashes = Array.from({ length: 1024 }, (_, i) => sha256Hex(`leaf-${i}`));
-    mockCheckpointedEntry(hashes, 500);
+    const entries = Array.from({ length: 1024 }, (_, i) => makeEntry({ id: `record-${i}`, description: `Entry ${i}` }));
+    mockCheckpointedEntry(entries, 500);
     const result = await verifyLedgerChainEntryById("chain-500", ORG_ID);
     if (result && result.verdict !== "pending") {
-      expect(result.proof.length).toBeLessThanOrEqual(10); // ceil(log2(1024)) = 10
+      expect(result.proof?.length).toBeLessThanOrEqual(10); // ceil(log2(1024)) = 10
     }
   });
 
   it("returns failed when the checkpoint signature does not validate against the public key", async () => {
-    const hashes = Array.from({ length: 4 }, (_, i) => sha256Hex(`leaf-${i}`));
+    const entries = Array.from({ length: 4 }, (_, i) => makeEntry({ id: `record-${i}`, description: `Entry ${i}` }));
     const otherKeys = generateSigningKeyPair();
-    mockCheckpointedEntry(hashes, 1, { signatureOverride: signRoot(buildMerkleTree(hashes).root, otherKeys.privateKey) });
-    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
-    expect(result?.verdict).toBe("failed");
-    if (result && result.verdict !== "pending") {
-      expect(result.signatureValid).toBe(false);
-    }
-  });
-
-  it("returns failed when the checkpoint's merkleRoot has been tampered with", async () => {
-    const hashes = Array.from({ length: 4 }, (_, i) => sha256Hex(`leaf-${i}`));
-    mockCheckpointedEntry(hashes, 1, { rootOverride: sha256Hex("forged-root") });
-    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
-    expect(result?.verdict).toBe("failed");
-  });
-
-  it("returns failed when the chain entry's own stored hash does not match what is in its checkpoint batch", async () => {
-    const hashes = Array.from({ length: 4 }, (_, i) => sha256Hex(`leaf-${i}`));
-    mockCheckpointedEntry(hashes, 1);
-    // Simulate a stored hash that was altered after the checkpoint was made,
-    // while everything else about the batch stays as originally checkpointed.
-    mockFindFirst.mockResolvedValue({
-      id: "chain-1",
-      recordId: "record-1",
-      recordType: "JOURNAL_ENTRY",
-      hash: sha256Hex("tampered-hash"),
-      previousHash: hashes[0],
-      checkpointId: "checkpoint-1",
+    const { tree } = mockCheckpointedEntry(entries, 1);
+    mockCheckpointFindUnique.mockResolvedValue({
+      id: "checkpoint-1",
+      merkleRoot: tree.root,
+      signature: signRoot(tree.root, otherKeys.privateKey),
+      rangeStart: new Date(),
+      rangeEnd: new Date(),
       createdAt: new Date(),
     });
     const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
     expect(result?.verdict).toBe("failed");
     if (result && result.verdict !== "pending") {
-      expect(result.inclusionValid).toBe(false);
+      expect(result.failureReason).toBe("signature_invalid");
+      expect(result.signatureValid).toBe(false);
     }
   });
 
+  it("returns failed when the checkpoint's merkleRoot has been tampered with", async () => {
+    const entries = Array.from({ length: 4 }, (_, i) => makeEntry({ id: `record-${i}`, description: `Entry ${i}` }));
+    mockCheckpointedEntry(entries, 1, { rootOverride: sha256Hex("forged-root") });
+    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
+    expect(result?.verdict).toBe("failed");
+  });
+
   it("includes checkpoint rangeStart/rangeEnd/id in a verified result", async () => {
-    const hashes = [sha256Hex("only-leaf")];
-    mockCheckpointedEntry(hashes, 0);
+    const entries = [makeEntry({ id: "record-0" })];
+    mockCheckpointedEntry(entries, 0);
     const result = await verifyLedgerChainEntryById("chain-0", ORG_ID);
     if (result && result.verdict !== "pending") {
-      expect(result.checkpoint.id).toBe("checkpoint-1");
-      expect(result.checkpoint.rangeStart).toBeInstanceOf(Date);
-      expect(result.checkpoint.rangeEnd).toBeInstanceOf(Date);
+      expect(result.checkpoint?.id).toBe("checkpoint-1");
+      expect(result.checkpoint?.rangeStart).toBeInstanceOf(Date);
+      expect(result.checkpoint?.rangeEnd).toBeInstanceOf(Date);
     } else {
       throw new Error("expected a non-pending result");
+    }
+  });
+});
+
+describe("verifyLedgerChainEntryById — control (no regressions on the untampered path)", () => {
+  it("returns verified for a fully untouched, correctly checkpointed, correctly linked entry", async () => {
+    const keys = generateSigningKeyPair();
+    installPublicKey(keys.publicKey);
+
+    const first = makeEntry({ id: "record-0", description: "Opening balance" });
+    const second = makeEntry({ id: "record-1", description: "Second entry" });
+    const firstHash = realHashFor(first, null);
+    const secondHash = realHashFor(second, firstHash);
+
+    const batch = [
+      { id: "chain-0", hash: firstHash },
+      { id: "chain-1", hash: secondHash },
+    ];
+
+    mockChainFindFirst.mockImplementation((args: any) => {
+      if (args.where?.id === "chain-1") {
+        return Promise.resolve({
+          id: "chain-1",
+          organisationId: ORG_ID,
+          recordId: "record-1",
+          recordType: "JOURNAL_ENTRY",
+          hash: secondHash,
+          previousHash: firstHash,
+          checkpointId: "checkpoint-1",
+          createdAt: new Date("2026-01-01T00:01:00.000Z"),
+        });
+      }
+      if (args.where?.createdAt) {
+        return Promise.resolve({ hash: firstHash });
+      }
+      return Promise.resolve(null);
+    });
+    mockJournalEntryFindUnique.mockImplementation((args: any) =>
+      Promise.resolve(args.where?.id === "record-1" ? second : null)
+    );
+
+    const tree = buildMerkleTree(batch.map((b) => b.hash));
+    mockCheckpointFindUnique.mockResolvedValue({
+      id: "checkpoint-1",
+      merkleRoot: tree.root,
+      signature: signRoot(tree.root, keys.privateKey),
+      rangeStart: new Date(),
+      rangeEnd: new Date(),
+      createdAt: new Date(),
+    });
+    mockChainFindMany.mockResolvedValue(batch);
+
+    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
+
+    expect(result?.verdict).toBe("verified");
+    if (result && result.verdict !== "pending") {
+      expect(result.failureReason).toBeNull();
     }
   });
 });

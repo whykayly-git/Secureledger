@@ -126,6 +126,34 @@ export async function runCheckpoint(): Promise<void> {
 }
 
 /**
+ * Same real orchestration function as runCheckpoint(), but with a caller-
+ * supplied maxIntervalMs instead of the forced-immediate 0 — used by the
+ * category (b) deletion-window trials to exercise the ACTUAL timer
+ * behaviour a deployment would see with CHECKPOINT_MAX_INTERVAL_MS set to
+ * a given value (apps/checkpoint-worker/src/config.ts), rather than
+ * always forcing a checkpoint regardless of elapsed time.
+ *
+ * Note decideCheckpoint's own first-checkpoint-ever exception
+ * (packages/../checkpoint-worker/src/checkpoint.ts): an organisation with
+ * NO prior checkpoint always checkpoints immediately on the next cycle
+ * regardless of maxIntervalMs. So a genuine "does the interval matter"
+ * test needs an established lastCheckpointAt first — see the trials that
+ * use this function for how they set that up.
+ */
+export async function runCheckpointWithInterval(maxIntervalMs: number): Promise<void> {
+  const keys = getTestKeys();
+  await runCheckpointCycle(prisma, {
+    batchThreshold: 500,
+    maxIntervalMs,
+    privateKeyPem: keys.privateKeyPem,
+  });
+}
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
  * Deletes everything created for one scenario's organisation, in FK
  * dependency order, so repeated suite runs don't accumulate test data in
  * the dev/CI database.

@@ -17,14 +17,16 @@ export async function GET() {
     });
 
     const rows: string[] = [
-      "chainId,recordType,recordId,createdAt,verdict,checkpointId,merkleRoot,signatureValid,inclusionValid",
+      "chainId,recordType,recordId,createdAt,verdict,failureReason,checkpointId,merkleRoot,signatureValid,inclusionValid",
     ];
 
     for (const row of chainRows) {
       const result = await verifyLedgerChainEntryById(row.id, session.organisationId);
       if (!result) continue;
       if (result.verdict === "pending") {
-        rows.push(`${result.chainId},${result.recordType},${result.recordId},${result.createdAt.toISOString()},pending,,,,`);
+        rows.push(
+          `${result.chainId},${result.recordType},${result.recordId},${result.createdAt.toISOString()},pending,,,,,`
+        );
       } else {
         rows.push(
           [
@@ -33,8 +35,9 @@ export async function GET() {
             result.recordId,
             result.createdAt.toISOString(),
             result.verdict,
-            result.checkpoint.id,
-            result.checkpoint.merkleRoot,
+            result.failureReason ?? "",
+            result.checkpoint?.id ?? "",
+            result.checkpoint?.merkleRoot ?? "",
             result.signatureValid,
             result.inclusionValid,
           ].join(",")

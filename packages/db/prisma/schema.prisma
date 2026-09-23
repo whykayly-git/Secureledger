@@ -67,6 +67,19 @@ model User {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  // Staff management (Manage Staff module). isOrgAdmin is a separate
+  // dimension from `role` — an organisation-admin flag, not an accounting
+  // role — because any of the existing accounting roles can also be
+  // trusted to manage staff. The first user registered for a NEW
+  // organisation (via /register) is always isOrgAdmin = true.
+  isOrgAdmin     Boolean   @default(false)
+  // A deactivated user cannot log in, but their historical
+  // JournalEntry/Invoice/LedgerChain references and AdminActionLog
+  // entries must keep displaying correctly — so this is a flag, never a
+  // delete.
+  isActive       Boolean   @default(true)
+  lastLoginAt    DateTime?
+
   organisation   Organisation    @relation(fields: [organisationId], references: [id])
   journalEntries JournalEntry[]  @relation("CreatedByUser")
   voidedJournalEntries JournalEntry[] @relation("VoidedByUser")
@@ -173,6 +186,20 @@ model Invoice {
   @@map("invoices")
 }
 
+// NOTE ON A CONSTRAINT NOT REPRESENTABLE HERE: migration
+// 20260923000000_org_scoping_and_duplicate_recordid adds a raw-SQL PARTIAL
+// unique index — UNIQUE (organisationId, recordId) WHERE recordType =
+// 'JOURNAL_ENTRY' — that Prisma's schema DSL has no syntax for, so it can't
+// be declared as an `@@unique` here without the index also (incorrectly)
+// covering INVOICE rows. It exists to close a real tamper scenario: an
+// attacker inserting a second LedgerChain row that duplicates a reference
+// to an already-chained, unaltered JournalEntry. It is JOURNAL_ENTRY-only
+// on purpose — a JournalEntry gets exactly one legitimate chain entry ever,
+// but the SAME Invoice legitimately gets several over its lifecycle (issue,
+// pay, void each call appendLedgerChainEntry again with the same recordId;
+// see apps/web/app/api/invoices/[id]/route.ts) — a blanket
+// (organisationId, recordType, recordId) unique constraint would reject
+// those legitimate transitions.
 model LedgerChain {
   id             String            @id @default(uuid())
   organisationId String
@@ -183,9 +210,20 @@ model LedgerChain {
   checkpointId   String?
   createdAt      DateTime          @default(now())
 
+  // Explicit, monotonically increasing position within this organisation's
+  // chain (1, 2, 3, ...), assigned at write time in appendLedgerChainEntry
+  // under the same per-organisation advisory lock that already serializes
+  // writes. Exists because createdAt alone is a mutable timestamp column
+  // like any other — sequenceNumber gives verifyChainContinuity a
+  // mechanically checkable notion of "position" that is independent of it,
+  // so a gap (a deleted row) or a reorder shows up as a broken 1..N
+  // sequence rather than relying on timestamp ordering alone.
+  sequenceNumber Int
+
   organisation   Organisation      @relation(fields: [organisationId], references: [id])
   checkpoint     LedgerCheckpoint? @relation(fields: [checkpointId], references: [id])
 
+  @@unique([organisationId, sequenceNumber])
   @@index([organisationId, createdAt])
   @@index([organisationId, checkpointId])
   @@index([recordType, recordId])
@@ -201,6 +239,15 @@ model LedgerCheckpoint {
   rangeStart     DateTime
   rangeEnd       DateTime
   createdAt      DateTime @default(now())
+
+  // Persisted count of LedgerChain rows originally included in this
+  // checkpoint's Merkle batch, set once at checkpoint-creation time from
+  // the same batch buildCheckpointPayload signed over. Lets
+  // verifyChainContinuity detect a deleted row (including the batch's own
+  // tip) purely by comparing this to COUNT(*) of surviving rows that still
+  // reference this checkpoint — independent of, and a check beyond, the
+  // per-record Merkle inclusion check.
+  recordCount    Int
 
   organisation   Organisation  @relation(fields: [organisationId], references: [id])
   chainEntries   LedgerChain[]
@@ -233,7 +280,14 @@ model PasswordResetToken {
 model AdminActionLog {
   id             String   @id @default(uuid())
   organisationId String
-  userId         String
+  // Nullable, with onDelete: SetNull — a staff member who is later hard-
+  // deleted (Manage Staff → Remove) may themselves have been the ACTOR of
+  // earlier admin actions (they invited someone, changed a role, etc.).
+  // The log row must survive their removal for audit-trail integrity;
+  // only the actor reference is cleared. targetId is a plain string, not
+  // a foreign key, so a removed user showing up as a TARGET (e.g. their
+  // own "REMOVE_STAFF" entry) was already fine without this.
+  userId         String?
   action         String
   targetType     String
   targetId       String
@@ -241,7 +295,7 @@ model AdminActionLog {
   createdAt      DateTime @default(now())
 
   organisation   Organisation @relation(fields: [organisationId], references: [id])
-  user           User         @relation(fields: [userId], references: [id])
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([organisationId, createdAt])
   @@map("admin_action_logs")

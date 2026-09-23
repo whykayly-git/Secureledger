@@ -49,11 +49,12 @@ export async function appendLedgerChainEntry(
   const tip = await tx.ledgerChain.findFirst({
     where: { organisationId },
     orderBy: [{ createdAt: "desc" }],
-    select: { hash: true },
+    select: { hash: true, sequenceNumber: true },
   });
 
   const previousHash = tip?.hash ?? null;
   const hash = computeChainHash(fields, previousHash);
+  const sequenceNumber = (tip?.sequenceNumber ?? 0) + 1;
 
   return tx.ledgerChain.create({
     data: {
@@ -62,6 +63,7 @@ export async function appendLedgerChainEntry(
       recordId,
       hash,
       previousHash,
+      sequenceNumber,
     },
   });
 }

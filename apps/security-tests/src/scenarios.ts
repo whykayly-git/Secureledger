@@ -256,11 +256,20 @@ async function scenario5_forgedSignature(): Promise<ScenarioResult> {
  * Scenario 6 — Tampering with a record still pending checkpoint.
  *
  * Posts an entry and deliberately does NOT run a checkpoint cycle, then
- * tampers with it anyway. Expects an honest "pending" verdict — distinct
- * from both "verified" and "failed" — because there is no signed
- * checkpoint yet to cryptographically confirm anything against. A system
- * that fell back to "verified" here (nothing to compare against yet) would
- * be a dangerous false pass; this scenario proves that doesn't happen.
+ * tampers with it anyway. Expects a "failed" verdict, not a false
+ * "verified" — a system that fell back to "verified" here (nothing
+ * checkpointed to compare against yet) would be a dangerous false pass, and
+ * this scenario proves that doesn't happen.
+ *
+ * "pending" is no longer an acceptable verdict for a TAMPERED record: the
+ * hash-recompute and chain-link checks need no checkpoint to evaluate, so
+ * they run before the checkpoint-presence check and catch tampering on
+ * uncheckpointed records too. "pending" is now reserved for records that
+ * are internally consistent (their stored hash and chain link both check
+ * out) but simply haven't been checkpointed yet — see Scenario 7's sibling
+ * expectations. A tampered record must never be reported as merely
+ * "pending", since that would read to an auditor as "nothing wrong found
+ * so far" rather than "this has been altered".
  */
 async function scenario6_pendingRecordTampered(): Promise<ScenarioResult> {
   const ctx = await createTestOrganisation("s6-pending-tampered");
@@ -280,12 +289,12 @@ async function scenario6_pendingRecordTampered(): Promise<ScenarioResult> {
       id: "6",
       name: "Tampering with a record still pending checkpoint",
       tamperDescription: `JournalLine ${debitLine.id} debit changed from 60 to 123456 on a record with no LedgerCheckpoint yet (checkpointId is still null)`,
-      expectedVerdict: "pending",
+      expectedVerdict: "failed",
       actualVerdict: result?.verdict,
       passMessage:
-        'Verification correctly reported "pending" — it honestly declines to confirm a record that has not yet been checkpointed, rather than falsely reporting "verified" just because there is nothing to compare against.',
+        'Verification correctly reported FAILED — recomputing the hash from current field values is evaluated even for uncheckpointed records, so tampering is caught before "pending" is ever considered.',
       failMessage:
-        `Verification returned "${result?.verdict ?? "?"}" instead of the honest "pending" state for an uncheckpointed record.`,
+        `Verification returned "${result?.verdict ?? "?"}" instead of "failed" for a tampered uncheckpointed record.`,
     });
   } finally {
     await teardownOrganisation(ctx.organisationId);

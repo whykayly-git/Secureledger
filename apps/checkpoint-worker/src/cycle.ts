@@ -70,6 +70,7 @@ export async function runCheckpointCycle(prisma: PrismaClient, options: CycleOpt
             signature: payload.signature,
             rangeStart: payload.rangeStart,
             rangeEnd: payload.rangeEnd,
+            recordCount: payload.recordsProcessed,
           },
         });
 
