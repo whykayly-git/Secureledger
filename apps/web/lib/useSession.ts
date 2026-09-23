@@ -3,7 +3,13 @@
 import { useEffect, useState } from "react";
 
 export type ClientSession = {
-  user: { id: string; name: string; email: string; role: "BOOKKEEPER" | "ACCOUNTANT" | "AUDITOR" };
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    role: "BOOKKEEPER" | "ACCOUNTANT" | "AUDITOR";
+    isOrgAdmin: boolean;
+  };
   organisation: { id: string; name: string };
 };
 

@@ -8,13 +8,14 @@ jest.mock("next/headers", () => ({
 
 // Imported after the mock is registered so getSession/requireSession pick
 // up the mocked next/headers module.
-import { getSession, requireSession, requireRole, UnauthorizedError, ForbiddenError } from "../lib/session";
+import { getSession, requireSession, requireRole, requireOrgAdmin, UnauthorizedError, ForbiddenError } from "../lib/session";
 
 const claims: SessionClaims = {
   userId: "user-1",
   organisationId: "org-1",
   role: "ACCOUNTANT",
   email: "ada@example.com",
+  isOrgAdmin: false,
 };
 
 beforeEach(() => {
@@ -105,5 +106,21 @@ describe("requireRole", () => {
   it("allows an AUDITOR to perform an AUDITOR-only action", () => {
     const auditorClaims: SessionClaims = { ...claims, role: "AUDITOR" };
     expect(() => requireRole(auditorClaims, "AUDITOR")).not.toThrow();
+  });
+});
+
+describe("requireOrgAdmin", () => {
+  it("does not throw when the session is an organisation admin", () => {
+    const adminClaims: SessionClaims = { ...claims, isOrgAdmin: true };
+    expect(() => requireOrgAdmin(adminClaims)).not.toThrow();
+  });
+
+  it("throws ForbiddenError when the session is not an organisation admin", () => {
+    expect(() => requireOrgAdmin(claims)).toThrow(ForbiddenError);
+  });
+
+  it("is independent of `role` — an AUDITOR without isOrgAdmin is still rejected", () => {
+    const auditorClaims: SessionClaims = { ...claims, role: "AUDITOR", isOrgAdmin: false };
+    expect(() => requireOrgAdmin(auditorClaims)).toThrow(ForbiddenError);
   });
 });

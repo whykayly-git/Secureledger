@@ -6,6 +6,7 @@ const claims: SessionClaims = {
   organisationId: "org-1",
   role: "ACCOUNTANT",
   email: "ada@example.com",
+  isOrgAdmin: false,
 };
 
 describe("hashPassword / verifyPassword", () => {

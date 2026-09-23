@@ -28,15 +28,25 @@ export async function POST(request: Request) {
       throw new ApiError("Invalid email or password", 401);
     }
 
+    // Checked only after the password itself verifies, so a deactivated
+    // account's status is never revealed to someone who doesn't already
+    // know the correct password.
+    if (!user.isActive) {
+      throw new ApiError("This account has been deactivated. Contact your administrator.", 403);
+    }
+
+    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+
     const token = signSessionToken({
       userId: user.id,
       organisationId: user.organisationId,
       role: user.role,
       email: user.email,
+      isOrgAdmin: user.isOrgAdmin,
     });
 
     const response = NextResponse.json({
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, isOrgAdmin: user.isOrgAdmin },
       organisation: { id: user.organisation.id, name: user.organisation.name },
     });
     response.cookies.set(AUTH_COOKIE_NAME, token, {

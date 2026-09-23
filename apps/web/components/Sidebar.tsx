@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { ClientSession } from "@/lib/useSession";
 
-const NAV_ITEMS: { href: string; label: string }[] = [
+const BASE_NAV_ITEMS: { href: string; label: string }[] = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/accounts", label: "Chart of Accounts" },
   { href: "/journal", label: "Journal Entries" },
@@ -14,8 +15,15 @@ const NAV_ITEMS: { href: string; label: string }[] = [
   { href: "/settings", label: "Settings" },
 ];
 
-export function Sidebar() {
+export function Sidebar({ session }: { session?: ClientSession | null }) {
   const pathname = usePathname();
+
+  // Hidden entirely (not just disabled) for non-admins — inserted right
+  // before Settings so it reads as an administrative section, not a
+  // day-to-day accounting one.
+  const navItems = session?.user.isOrgAdmin
+    ? [...BASE_NAV_ITEMS.slice(0, -1), { href: "/staff", label: "Manage Staff" }, BASE_NAV_ITEMS[BASE_NAV_ITEMS.length - 1]]
+    : BASE_NAV_ITEMS;
 
   return (
     <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
@@ -26,7 +34,7 @@ export function Sidebar() {
         <span className="font-bold text-slate-900">SecureLedger</span>
       </div>
       <nav className="flex-1 space-y-1 px-3 py-4">
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const active = pathname === item.href || pathname?.startsWith(item.href + "/");
           return (
             <Link

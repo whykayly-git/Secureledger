@@ -14,6 +14,7 @@ export type SessionClaims = {
   organisationId: string;
   role: Role;
   email: string;
+  isOrgAdmin: boolean;
 };
 
 export async function hashPassword(plaintext: string): Promise<string> {

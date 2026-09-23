@@ -27,3 +27,10 @@ export function requireRole(session: SessionClaims, ...roles: SessionClaims["rol
     throw new ForbiddenError(`Requires role: ${roles.join(" or ")}`);
   }
 }
+
+/** Manage Staff is gated on the isOrgAdmin flag, not on `role` — any accounting role can also be an org admin. */
+export function requireOrgAdmin(session: SessionClaims): void {
+  if (!session.isOrgAdmin) {
+    throw new ForbiddenError("Requires organisation admin access");
+  }
+}

@@ -37,6 +37,10 @@ export async function POST(request: Request) {
           passwordHash,
           role: "ACCOUNTANT",
           organisationId: organisation.id,
+          // /register always creates a brand new organisation together
+          // with this user, so they are unconditionally its first (and
+          // only, at this point) member — always the org admin.
+          isOrgAdmin: true,
         },
       });
       return { user, organisation };
@@ -47,10 +51,11 @@ export async function POST(request: Request) {
       organisationId: organisation.id,
       role: user.role,
       email: user.email,
+      isOrgAdmin: user.isOrgAdmin,
     });
 
     const response = NextResponse.json({
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, isOrgAdmin: user.isOrgAdmin },
       organisation: { id: organisation.id, name: organisation.name },
     });
     response.cookies.set(AUTH_COOKIE_NAME, token, {

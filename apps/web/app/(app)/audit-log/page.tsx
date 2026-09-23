@@ -9,7 +9,8 @@ import { Badge } from "@/components/Badge";
 import { formatDateTime, shortHash } from "@/lib/format";
 import { useSession } from "@/lib/useSession";
 
-type AuditEntry = {
+type LedgerAuditEntry = {
+  kind: "LEDGER";
   chainId: string;
   recordType: "JOURNAL_ENTRY" | "INVOICE";
   recordId: string;
@@ -18,6 +19,16 @@ type AuditEntry = {
   createdAt: string;
   summary: string;
 };
+
+type StaffAuditEntry = {
+  kind: "STAFF";
+  id: string;
+  action: string;
+  createdAt: string;
+  summary: string;
+};
+
+type AuditEntry = LedgerAuditEntry | StaffAuditEntry;
 
 export default function AuditLogPage() {
   const { session } = useSession();
@@ -58,6 +69,7 @@ export default function AuditLogPage() {
             <option value="">All record types</option>
             <option value="JOURNAL_ENTRY">Journal Entries</option>
             <option value="INVOICE">Invoices</option>
+            <option value="STAFF">Staff</option>
           </select>
         </div>
 
@@ -81,26 +93,39 @@ export default function AuditLogPage() {
                 </td>
               </tr>
             )}
-            {entries.map((e) => (
-              <tr key={e.chainId}>
-                <TD>{formatDateTime(e.createdAt)}</TD>
-                <TD>
-                  <Badge tone="blue">{e.recordType.replace("_", " ")}</Badge>
-                </TD>
-                <TD>{e.summary}</TD>
-                <TD className="font-mono text-xs">{shortHash(e.hash)}</TD>
-                <TD>
-                  <span className={`text-xs font-bold ${e.checkpointed ? "text-green-600" : "text-amber-600"}`}>
-                    {e.checkpointed ? "Checkpointed" : "Pending"}
-                  </span>
-                </TD>
-                <TD>
-                  <Link href={`/verification?recordId=${e.recordId}&chainId=${e.chainId}`} className="text-sm font-bold text-primary hover:underline">
-                    Verify
-                  </Link>
-                </TD>
-              </tr>
-            ))}
+            {entries.map((e) =>
+              e.kind === "STAFF" ? (
+                <tr key={e.id}>
+                  <TD>{formatDateTime(e.createdAt)}</TD>
+                  <TD>
+                    <Badge tone="amber">Staff</Badge>
+                  </TD>
+                  <TD colSpan={4}>{e.summary}</TD>
+                </tr>
+              ) : (
+                <tr key={e.chainId}>
+                  <TD>{formatDateTime(e.createdAt)}</TD>
+                  <TD>
+                    <Badge tone="blue">{e.recordType.replace("_", " ")}</Badge>
+                  </TD>
+                  <TD>{e.summary}</TD>
+                  <TD className="font-mono text-xs">{shortHash(e.hash)}</TD>
+                  <TD>
+                    <span className={`text-xs font-bold ${e.checkpointed ? "text-green-600" : "text-amber-600"}`}>
+                      {e.checkpointed ? "Checkpointed" : "Pending"}
+                    </span>
+                  </TD>
+                  <TD>
+                    <Link
+                      href={`/verification?recordId=${e.recordId}&chainId=${e.chainId}`}
+                      className="text-sm font-bold text-primary hover:underline"
+                    >
+                      Verify
+                    </Link>
+                  </TD>
+                </tr>
+              )
+            )}
           </TBody>
         </Table>
       </Card>
