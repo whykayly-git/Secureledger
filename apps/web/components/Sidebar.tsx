@@ -21,9 +21,12 @@ export function Sidebar({ session }: { session?: ClientSession | null }) {
   // Hidden entirely (not just disabled) for non-admins — inserted right
   // before Settings so it reads as an administrative section, not a
   // day-to-day accounting one.
-  const navItems = session?.user.isOrgAdmin
+  const withStaff = session?.user.isOrgAdmin
     ? [...BASE_NAV_ITEMS.slice(0, -1), { href: "/staff", label: "Manage Staff" }, BASE_NAV_ITEMS[BASE_NAV_ITEMS.length - 1]]
     : BASE_NAV_ITEMS;
+  const navItems = session?.user.isPlatformAdmin
+    ? [...withStaff, { href: "/admin", label: "Platform Admin" }]
+    : withStaff;
 
   return (
     <aside className="print:hidden hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">

@@ -9,8 +9,10 @@ export type ClientSession = {
     email: string;
     role: "BOOKKEEPER" | "ACCOUNTANT" | "AUDITOR";
     isOrgAdmin: boolean;
+    isPlatformAdmin: boolean;
   };
   organisation: { id: string; name: string };
+  actingAsPlatformAdmin: boolean;
 };
 
 export function useSession() {

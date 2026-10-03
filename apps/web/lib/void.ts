@@ -61,7 +61,7 @@ export async function logAdminAction(
     organisationId: string;
     userId: string;
     action: string;
-    targetType: "JOURNAL_ENTRY" | "INVOICE" | "USER";
+    targetType: "JOURNAL_ENTRY" | "INVOICE" | "USER" | "ORGANISATION";
     targetId: string;
     metadata?: Record<string, unknown>;
   }

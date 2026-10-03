@@ -9,6 +9,7 @@ const STAFF_ACTION_LABELS: Record<string, string> = {
   DEACTIVATE_STAFF: "deactivated",
   REACTIVATE_STAFF: "reactivated",
   REMOVE_STAFF: "permanently removed",
+  PLATFORM_RESET_PASSWORD: "reset the password of",
 };
 
 function describeStaffAction(action: string, actorName: string, metadata: unknown): string {

@@ -15,6 +15,8 @@ export type SessionClaims = {
   role: Role;
   email: string;
   isOrgAdmin: boolean;
+  /** Set only on a session a platform admin opened into another organisation ("Open as admin"). */
+  actingAsPlatformAdmin?: boolean;
 };
 
 /**
