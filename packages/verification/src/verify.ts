@@ -70,25 +70,65 @@ export type VerificationResult =
  * treated by the caller as a hash mismatch, since there is no longer any
  * real, same-tenant data the stored hash could be validated against.
  */
-async function recomputeStoredHash(
-  recordType: string,
-  recordId: string,
-  organisationId: string,
-  previousHash: string | null
-): Promise<string | null> {
+async function recomputeStoredHash(chainEntry: {
+  id: string;
+  recordType: string;
+  recordId: string;
+  organisationId: string;
+  previousHash: string | null;
+}): Promise<string | null> {
+  const { recordType, recordId, organisationId, previousHash } = chainEntry;
+
   if (recordType === "JOURNAL_ENTRY") {
     const entry = await prisma.journalEntry.findFirst({
       where: { id: recordId, organisationId },
       include: { lines: true },
     });
     if (!entry) return null;
-    return computeChainHash(journalEntryHashFields(entry), previousHash);
+
+    // A journal entry is chained once, when it is POSTED. Voiding later flips
+    // its status to VOID and posts a separate reversing entry, without
+    // touching the stored hash — so the status the hash covers is POSTED.
+    // That is only a legitimate state if the reversing entry actually
+    // exists; a bare status flip to VOID is indistinguishable from
+    // tampering and is NOT excused (it falls through to a mismatch).
+    let hashedStatus = entry.status;
+    if (entry.status === "VOID") {
+      const reversal = await prisma.journalEntry.findFirst({
+        where: { organisationId, reversalOfEntryId: entry.id },
+        select: { id: true },
+      });
+      if (!reversal) return null;
+      hashedStatus = "POSTED";
+    }
+    return computeChainHash(journalEntryHashFields({ ...entry, status: hashedStatus }), previousHash);
   }
 
   if (recordType === "INVOICE") {
     const invoice = await prisma.invoice.findFirst({ where: { id: recordId, organisationId } });
     if (!invoice) return null;
-    return computeChainHash(invoiceHashFields(invoice), previousHash);
+
+    // An invoice is chained again at every lifecycle transition (issue, pay,
+    // void), each time over its status AT THAT MOMENT, so an older row can
+    // never match the invoice's current status. The status each row covers is
+    // fixed by its position: the newest row is the current status, the first
+    // is ISSUED, a middle row is PAID (the only three-step path is
+    // ISSUED -> PAID -> VOIDED). Every other field is still recomputed from
+    // live data, so tampering with amount, items, customer or due date is
+    // caught exactly as before.
+    const rows = await prisma.ledgerChain.findMany({
+      where: { organisationId, recordType: "INVOICE", recordId },
+      orderBy: { sequenceNumber: "asc" },
+      select: { id: true },
+    });
+    const position = rows.findIndex((r) => r.id === chainEntry.id);
+    if (position === -1) return null;
+
+    let hashedStatus = invoice.status;
+    if (position !== rows.length - 1) {
+      hashedStatus = position === 0 ? "ISSUED" : "PAID";
+    }
+    return computeChainHash(invoiceHashFields({ ...invoice, status: hashedStatus }), previousHash);
   }
 
   return null;
@@ -166,12 +206,7 @@ export async function verifyLedgerChainEntryById(
 
   // --- Checks that need no checkpoint, and so apply on every path ---
 
-  const recomputedHash = await recomputeStoredHash(
-    chainEntry.recordType,
-    chainEntry.recordId,
-    chainEntry.organisationId,
-    chainEntry.previousHash
-  );
+  const recomputedHash = await recomputeStoredHash(chainEntry);
   if (recomputedHash === null || recomputedHash !== chainEntry.hash) {
     return failed("hash_mismatch");
   }

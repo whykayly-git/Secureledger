@@ -32,7 +32,7 @@ jest.mock("@secureledger/db", () => ({
 
 // Imported after the mock is registered.
 import { verifyLedgerChainEntryById } from "../src/verify";
-import { journalEntryHashFields } from "@secureledger/ledger";
+import { journalEntryHashFields, invoiceHashFields } from "@secureledger/ledger";
 
 const ORG_ID = "org-1";
 
@@ -561,5 +561,137 @@ describe("verifyLedgerChainEntryById — control (no regressions on the untamper
     if (result && result.verdict !== "pending") {
       expect(result.failureReason).toBeNull();
     }
+  });
+});
+
+describe("verifyLedgerChainEntryById — voided journal entries", () => {
+  const postedHash = () => realHashFor(makeEntry({ status: "POSTED" }), null);
+
+  function installVoidedEntry(reversal: { id: string } | null) {
+    const voided = makeEntry({ status: "VOID" });
+    setupChainRow({
+      chainId: "chain-1",
+      entry: voided,
+      previousHash: null,
+      priorRowHash: null,
+      checkpointId: null,
+      storedHashOverride: postedHash(), // the hash was computed when the entry was POSTED
+    });
+    mockJournalEntryFindUnique.mockImplementation((args: any) => {
+      if (args.where?.reversalOfEntryId) return Promise.resolve(reversal);
+      return Promise.resolve(args.where?.id === voided.id ? voided : null);
+    });
+  }
+
+  it("does not flag an entry that was legitimately voided (a reversing entry exists)", async () => {
+    installVoidedEntry({ id: "reversing-1" });
+    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
+    expect(result?.verdict).toBe("pending");
+  });
+
+  it("still flags a status flipped to VOID when no reversing entry exists", async () => {
+    installVoidedEntry(null);
+    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
+    expect(result?.verdict).toBe("failed");
+    if (result && result.verdict !== "pending") expect(result.failureReason).toBe("hash_mismatch");
+  });
+
+  it("still flags an amount changed on a voided entry, even though a reversing entry exists", async () => {
+    const voided = makeEntry({ status: "VOID", lines: [
+      { accountId: "acc-expense", debit: 999, credit: 0 },
+      { accountId: "acc-cash", debit: 0, credit: 999 },
+    ] });
+    setupChainRow({
+      chainId: "chain-1",
+      entry: voided,
+      previousHash: null,
+      priorRowHash: null,
+      checkpointId: null,
+      storedHashOverride: postedHash(),
+    });
+    mockJournalEntryFindUnique.mockImplementation((args: any) =>
+      args.where?.reversalOfEntryId ? Promise.resolve({ id: "reversing-1" }) : Promise.resolve(voided)
+    );
+    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
+    expect(result?.verdict).toBe("failed");
+  });
+});
+
+describe("verifyLedgerChainEntryById — invoice lifecycle rows", () => {
+  const baseInvoice = {
+    id: "inv-1",
+    organisationId: ORG_ID,
+    customerName: "Acme",
+    lineItems: { items: [{ description: "Work", quantity: 1, unitPrice: 100, incomeAccountId: "inc-1" }], receivableAccountId: "cash-1" },
+    amount: 100,
+    dueDate: new Date("2026-02-01T00:00:00.000Z"),
+  };
+
+  /** Chains one row per status, as the issue/pay/void routes do, then points the DB at `currentStatus`. */
+  function installInvoice(statuses: string[], currentStatus: string, dbOverrides: Record<string, unknown> = {}) {
+    const rows: { id: string; hash: string; previousHash: string | null; createdAt: Date }[] = [];
+    let previous: string | null = null;
+    statuses.forEach((status, i) => {
+      const hash = computeChainHash(invoiceHashFields({ ...baseInvoice, status }), previous);
+      rows.push({ id: `chain-${i}`, hash, previousHash: previous, createdAt: new Date(2026, 0, 5, 0, i) });
+      previous = hash;
+    });
+
+    mockChainFindFirst.mockImplementation((args: any) => {
+      if (args.where?.id) {
+        const row = rows.find((r) => r.id === args.where.id);
+        return Promise.resolve(
+          row ? { ...row, organisationId: ORG_ID, recordId: baseInvoice.id, recordType: "INVOICE", checkpointId: null } : null
+        );
+      }
+      if (args.where?.createdAt) {
+        const before = rows.filter((r) => r.createdAt < args.where.createdAt.lt);
+        return Promise.resolve(before.length ? { hash: before[before.length - 1].hash } : null);
+      }
+      return Promise.resolve(null);
+    });
+    mockChainFindMany.mockImplementation((args: any) =>
+      args.where?.recordType === "INVOICE" ? Promise.resolve(rows.map((r) => ({ id: r.id }))) : Promise.resolve([])
+    );
+    mockInvoiceFindUnique.mockResolvedValue({ ...baseInvoice, status: currentStatus, ...dbOverrides });
+  }
+
+  it("verifies every row of an issued-then-paid invoice, not only the newest", async () => {
+    installInvoice(["ISSUED", "PAID"], "PAID");
+    for (const id of ["chain-0", "chain-1"]) {
+      const result = await verifyLedgerChainEntryById(id, ORG_ID);
+      expect(result?.verdict).toBe("pending");
+    }
+  });
+
+  it("verifies every row of an issued-paid-voided invoice", async () => {
+    installInvoice(["ISSUED", "PAID", "VOIDED"], "VOIDED");
+    for (const id of ["chain-0", "chain-1", "chain-2"]) {
+      const result = await verifyLedgerChainEntryById(id, ORG_ID);
+      expect(result?.verdict).toBe("pending");
+    }
+  });
+
+  it("verifies both rows of an invoice voided straight after being issued", async () => {
+    installInvoice(["ISSUED", "VOIDED"], "VOIDED");
+    for (const id of ["chain-0", "chain-1"]) {
+      const result = await verifyLedgerChainEntryById(id, ORG_ID);
+      expect(result?.verdict).toBe("pending");
+    }
+  });
+
+  it("flags every row when the invoice amount is altered after the fact", async () => {
+    installInvoice(["ISSUED", "PAID"], "PAID", { amount: 5 });
+    for (const id of ["chain-0", "chain-1"]) {
+      const result = await verifyLedgerChainEntryById(id, ORG_ID);
+      expect(result?.verdict).toBe("failed");
+    }
+  });
+
+  it("flags the newest row when the invoice's current status was changed without a matching chain row", async () => {
+    installInvoice(["ISSUED", "PAID"], "VOIDED");
+    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
+    expect(result?.verdict).toBe("failed");
+    if (result && result.verdict !== "pending") expect(result.failureReason).toBe("hash_mismatch");
   });
 });
