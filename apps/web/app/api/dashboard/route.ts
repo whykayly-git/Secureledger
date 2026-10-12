@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@secureledger/db";
 import { requireSession } from "@/lib/session";
 import { handleApiError } from "@/lib/api";
+import { COUNTED_ENTRY_STATUSES } from "@secureledger/ledger";
 
 export async function GET() {
   try {
@@ -10,7 +11,7 @@ export async function GET() {
 
     const accounts = await prisma.account.findMany({
       where: { organisationId },
-      include: { journalLines: { where: { journalEntry: { status: "POSTED" } } } },
+      include: { journalLines: { where: { journalEntry: { status: { in: [...COUNTED_ENTRY_STATUSES] } } } } },
     });
 
     const sumByType = (type: string, sign: 1 | -1) =>
@@ -32,7 +33,7 @@ export async function GET() {
     const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthLines = await prisma.journalLine.findMany({
       where: {
-        journalEntry: { organisationId, status: "POSTED", date: { gte: periodStart } },
+        journalEntry: { organisationId, status: { in: [...COUNTED_ENTRY_STATUSES] }, date: { gte: periodStart } },
       },
       include: { account: true },
     });
@@ -71,7 +72,7 @@ export async function GET() {
     // Last 6 months income vs expense series for the dashboard chart.
     const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
     const seriesLines = await prisma.journalLine.findMany({
-      where: { journalEntry: { organisationId, status: "POSTED", date: { gte: sixMonthsAgo } } },
+      where: { journalEntry: { organisationId, status: { in: [...COUNTED_ENTRY_STATUSES] }, date: { gte: sixMonthsAgo } } },
       include: { account: true, journalEntry: { select: { date: true } } },
     });
     const monthBuckets = new Map<string, { income: number; expense: number }>();

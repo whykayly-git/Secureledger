@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@secureledger/db";
 import { requireSession } from "@/lib/session";
 import { handleApiError } from "@/lib/api";
+import { COUNTED_ENTRY_STATUSES } from "@secureledger/ledger";
 
 export async function GET(request: Request) {
   try {
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
         journalLines: {
           where: {
             journalEntry: {
-              status: "POSTED",
+              status: { in: [...COUNTED_ENTRY_STATUSES] },
               ...(from || to
                 ? {
                     date: {

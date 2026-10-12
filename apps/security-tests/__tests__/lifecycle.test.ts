@@ -12,7 +12,12 @@
  * package. Requires a reachable DATABASE_URL (see .env.example).
  */
 import { prisma } from "@secureledger/db";
-import { appendLedgerChainEntry, invoiceHashFields, journalEntryHashFields } from "@secureledger/ledger";
+import {
+  appendLedgerChainEntry,
+  COUNTED_ENTRY_STATUSES,
+  invoiceHashFields,
+  journalEntryHashFields,
+} from "@secureledger/ledger";
 import { verifyLedgerChainEntryById } from "@secureledger/verification";
 import {
   createTestOrganisation,
@@ -111,6 +116,36 @@ describe("voided journal entries", () => {
     await prisma.journalLine.update({ where: { id: line.id }, data: { debit: 999 } });
 
     expect((await verdictOf(chainEntry.id)).verdict).toBe("failed");
+  });
+});
+
+describe("report totals after a void", () => {
+  /** Net debit minus credit per account, over the same status filter the report routes use. */
+  async function netByAccount() {
+    const lines = await prisma.journalLine.findMany({
+      where: { journalEntry: { organisationId: ctx.organisationId, status: { in: [...COUNTED_ENTRY_STATUSES] } } },
+    });
+    const net = new Map<string, number>();
+    for (const l of lines) net.set(l.accountId, (net.get(l.accountId) ?? 0) + Number(l.debit) - Number(l.credit));
+    return net;
+  }
+
+  it("a voided entry and its reversing entry net to zero in every account", async () => {
+    const { entry } = await postJournalEntry(ctx, "to be voided", 120);
+    expect((await netByAccount()).get(ctx.expenseAccountId)).toBe(120);
+
+    await voidEntry(entry.id);
+
+    const net = await netByAccount();
+    expect(net.get(ctx.expenseAccountId)).toBe(0);
+    expect(net.get(ctx.cashAccountId)).toBe(0);
+  });
+
+  it("an unvoided entry is counted exactly once", async () => {
+    await postJournalEntry(ctx, "kept", 75);
+    const net = await netByAccount();
+    expect(net.get(ctx.expenseAccountId)).toBe(75);
+    expect(net.get(ctx.cashAccountId)).toBe(-75);
   });
 });
 

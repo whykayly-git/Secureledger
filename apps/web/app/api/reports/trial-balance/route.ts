@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@secureledger/db";
 import { requireSession } from "@/lib/session";
 import { handleApiError } from "@/lib/api";
+import { COUNTED_ENTRY_STATUSES } from "@secureledger/ledger";
 
 export async function GET() {
   try {
@@ -11,7 +12,7 @@ export async function GET() {
       where: { organisationId: session.organisationId },
       include: {
         journalLines: {
-          where: { journalEntry: { status: "POSTED" } },
+          where: { journalEntry: { status: { in: [...COUNTED_ENTRY_STATUSES] } } },
         },
       },
       orderBy: [{ type: "asc" }, { code: "asc" }],
