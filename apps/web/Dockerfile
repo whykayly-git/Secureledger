@@ -24,6 +24,10 @@ RUN npm run build --workspace=packages/crypto
 RUN npm run build --workspace=packages/ledger
 RUN npm run build --workspace=packages/verification
 ENV NEXT_TELEMETRY_DISABLED=1
+# `next build` imports API route modules, and lib/auth.ts throws at import time
+# without JWT_SECRET. This placeholder lives only in this build stage; the
+# runner stage never inherits it and reads the real secret at runtime.
+ENV JWT_SECRET=build-only-placeholder
 RUN npm run build --workspace=apps/web
 
 FROM node:20-alpine AS runner

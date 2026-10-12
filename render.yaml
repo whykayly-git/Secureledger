@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: secureledger-web
+    runtime: docker
+    dockerfilePath: ./apps/web/Dockerfile
+    dockerContext: .
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /login
+    preDeployCommand: cd /repo && npx prisma migrate deploy --schema packages/db/prisma/schema.prisma
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: secureledger-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CHECKPOINT_PUBLIC_KEY
+        sync: false
+      - key: PLATFORM_ADMIN_EMAILS
+        sync: false
+      - key: NODE_ENV
+        value: production
+
+  - type: worker
+    name: secureledger-checkpoint-worker
+    runtime: docker
+    dockerfilePath: ./apps/checkpoint-worker/Dockerfile
+    dockerContext: .
+    plan: starter
+    region: frankfurt
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: secureledger-db
+          property: connectionString
+      - key: CHECKPOINT_PRIVATE_KEY
+        sync: false
+      - key: CHECKPOINT_POLL_INTERVAL_MS
+        value: "10000"
+      - key: CHECKPOINT_MAX_INTERVAL_MS
+        value: "30000"
+      - key: CHECKPOINT_BATCH_THRESHOLD
+        value: "500"
+      - key: NODE_ENV
+        value: production
+
+databases:
+  - name: secureledger-db
+    databaseName: secureledger
+    user: secureledger
+    plan: basic-256mb
+    region: frankfurt
