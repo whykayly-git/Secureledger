@@ -157,7 +157,7 @@ describe("invoice lifecycle rows", () => {
         customerName: "Lifecycle Customer",
         lineItems: { items: [{ description: "Work", quantity: 1, unitPrice: 250, incomeAccountId: ctx.expenseAccountId }], receivableAccountId: ctx.cashAccountId },
         amount: 250,
-        status: "ISSUED",
+        status: "DRAFT",
         dueDate: new Date("2026-12-01T00:00:00.000Z"),
       },
     });
@@ -175,6 +175,8 @@ describe("invoice lifecycle rows", () => {
       chainIds.push(row.id);
     };
 
+    await chain(); // DRAFT, chained when the invoice is created
+    await prisma.invoice.update({ where: { id: invoice.id }, data: { status: "ISSUED" } });
     await chain(); // ISSUED
     await prisma.invoice.update({ where: { id: invoice.id }, data: { status: "PAID" } });
     await chain(); // PAID

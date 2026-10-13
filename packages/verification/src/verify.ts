@@ -47,6 +47,21 @@ export type VerificationResult =
     };
 
 /**
+ * The statuses an invoice's chain rows were hashed over, oldest first, keyed by
+ * its current status: created as DRAFT, then issued, then optionally paid, and
+ * optionally voided (from issued or from paid).
+ */
+const INVOICE_STATUS_PATHS: Record<string, string[][]> = {
+  DRAFT: [["DRAFT"]],
+  ISSUED: [["DRAFT", "ISSUED"]],
+  PAID: [["DRAFT", "ISSUED", "PAID"]],
+  VOIDED: [
+    ["DRAFT", "ISSUED", "VOIDED"],
+    ["DRAFT", "ISSUED", "PAID", "VOIDED"],
+  ],
+};
+
+/**
  * Recomputes a LedgerChain entry's hash from the CURRENT state of the
  * underlying JournalEntry/Invoice, using the exact same field-selection
  * functions the write path uses (packages/ledger), so verification can
@@ -108,14 +123,14 @@ async function recomputeStoredHash(chainEntry: {
     const invoice = await prisma.invoice.findFirst({ where: { id: recordId, organisationId } });
     if (!invoice) return null;
 
-    // An invoice is chained again at every lifecycle transition (issue, pay,
-    // void), each time over its status AT THAT MOMENT, so an older row can
-    // never match the invoice's current status. The status each row covers is
-    // fixed by its position: the newest row is the current status, the first
-    // is ISSUED, a middle row is PAID (the only three-step path is
-    // ISSUED -> PAID -> VOIDED). Every other field is still recomputed from
-    // live data, so tampering with amount, items, customer or due date is
-    // caught exactly as before.
+    // An invoice is chained when it is created (DRAFT) and again at every
+    // lifecycle transition, each time over its status AT THAT MOMENT, so an
+    // older row can never match the invoice's current status. Only three
+    // paths are legal (see INVOICE_STATUS_PATHS), so the status each row
+    // covers is fixed by its position and the invoice's current status. A row
+    // count that fits no legal path is reported as a mismatch. Every other
+    // field is still recomputed from live data, so tampering with amount,
+    // items, customer or due date is caught in every row.
     const rows = await prisma.ledgerChain.findMany({
       where: { organisationId, recordType: "INVOICE", recordId },
       orderBy: { sequenceNumber: "asc" },
@@ -124,11 +139,9 @@ async function recomputeStoredHash(chainEntry: {
     const position = rows.findIndex((r) => r.id === chainEntry.id);
     if (position === -1) return null;
 
-    let hashedStatus = invoice.status;
-    if (position !== rows.length - 1) {
-      hashedStatus = position === 0 ? "ISSUED" : "PAID";
-    }
-    return computeChainHash(invoiceHashFields({ ...invoice, status: hashedStatus }), previousHash);
+    const path = INVOICE_STATUS_PATHS[invoice.status]?.find((p) => p.length === rows.length);
+    if (!path) return null;
+    return computeChainHash(invoiceHashFields({ ...invoice, status: path[position] }), previousHash);
   }
 
   return null;

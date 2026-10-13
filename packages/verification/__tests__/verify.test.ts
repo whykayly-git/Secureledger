@@ -656,32 +656,40 @@ describe("verifyLedgerChainEntryById — invoice lifecycle rows", () => {
     mockInvoiceFindUnique.mockResolvedValue({ ...baseInvoice, status: currentStatus, ...dbOverrides });
   }
 
-  it("verifies every row of an issued-then-paid invoice, not only the newest", async () => {
-    installInvoice(["ISSUED", "PAID"], "PAID");
-    for (const id of ["chain-0", "chain-1"]) {
-      const result = await verifyLedgerChainEntryById(id, ORG_ID);
-      expect(result?.verdict).toBe("pending");
-    }
-  });
-
-  it("verifies every row of an issued-paid-voided invoice", async () => {
-    installInvoice(["ISSUED", "PAID", "VOIDED"], "VOIDED");
+  it("verifies every row of a created, issued and paid invoice, not only the newest", async () => {
+    installInvoice(["DRAFT", "ISSUED", "PAID"], "PAID");
     for (const id of ["chain-0", "chain-1", "chain-2"]) {
       const result = await verifyLedgerChainEntryById(id, ORG_ID);
       expect(result?.verdict).toBe("pending");
     }
   });
 
-  it("verifies both rows of an invoice voided straight after being issued", async () => {
-    installInvoice(["ISSUED", "VOIDED"], "VOIDED");
-    for (const id of ["chain-0", "chain-1"]) {
+  it("verifies every row of an invoice that was paid and then voided", async () => {
+    installInvoice(["DRAFT", "ISSUED", "PAID", "VOIDED"], "VOIDED");
+    for (const id of ["chain-0", "chain-1", "chain-2", "chain-3"]) {
+      const result = await verifyLedgerChainEntryById(id, ORG_ID);
+      expect(result?.verdict).toBe("pending");
+    }
+  });
+
+  it("verifies every row of an invoice voided straight after being issued", async () => {
+    installInvoice(["DRAFT", "ISSUED", "VOIDED"], "VOIDED");
+    for (const id of ["chain-0", "chain-1", "chain-2"]) {
       const result = await verifyLedgerChainEntryById(id, ORG_ID);
       expect(result?.verdict).toBe("pending");
     }
   });
 
   it("flags every row when the invoice amount is altered after the fact", async () => {
-    installInvoice(["ISSUED", "PAID"], "PAID", { amount: 5 });
+    installInvoice(["DRAFT", "ISSUED", "PAID"], "PAID", { amount: 5 });
+    for (const id of ["chain-0", "chain-1", "chain-2"]) {
+      const result = await verifyLedgerChainEntryById(id, ORG_ID);
+      expect(result?.verdict).toBe("failed");
+    }
+  });
+
+  it("flags rows whose count fits no legal lifecycle path (for example a missing draft row)", async () => {
+    installInvoice(["ISSUED", "PAID"], "PAID");
     for (const id of ["chain-0", "chain-1"]) {
       const result = await verifyLedgerChainEntryById(id, ORG_ID);
       expect(result?.verdict).toBe("failed");
@@ -689,8 +697,8 @@ describe("verifyLedgerChainEntryById — invoice lifecycle rows", () => {
   });
 
   it("flags the newest row when the invoice's current status was changed without a matching chain row", async () => {
-    installInvoice(["ISSUED", "PAID"], "VOIDED");
-    const result = await verifyLedgerChainEntryById("chain-1", ORG_ID);
+    installInvoice(["DRAFT", "ISSUED", "PAID"], "VOIDED");
+    const result = await verifyLedgerChainEntryById("chain-2", ORG_ID);
     expect(result?.verdict).toBe("failed");
     if (result && result.verdict !== "pending") expect(result.failureReason).toBe("hash_mismatch");
   });

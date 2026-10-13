@@ -1,11 +1,169 @@
 "use client";
 
 import { Suspense, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
-import { VerdictBadge } from "@/components/Badge";
+import { Badge, VerdictBadge } from "@/components/Badge";
+import { Table, THead, TBody, TH, TD } from "@/components/Table";
 import { formatDateTime } from "@/lib/format";
+import { useSession } from "@/lib/useSession";
+
+type VerifyAllReport = {
+  checkedAt: string;
+  durationMs: number;
+  totalRecords: number;
+  checkedRecords: number;
+  truncated: boolean;
+  counts: { verified: number; pending: number; failed: number };
+  failures: { chainId: string; recordId: string; recordType: string; createdAt: string; failureReason: string }[];
+  continuity: { intact: boolean; totalRows: number; gaps: { type: string; detail: string }[] };
+};
+
+const SHORT_REASONS: Record<string, string> = {
+  hash_mismatch: "Record changed after it was chained",
+  chain_link_broken: "Link to the previous record is broken",
+  merkle_inclusion_invalid: "Not covered by its signed checkpoint",
+  signature_invalid: "Checkpoint signature is invalid",
+  verification_error: "Could not be verified (checkpoint data missing)",
+};
+
+function VerifyAllPanel() {
+  const [running, setRunning] = useState(false);
+  const [report, setReport] = useState<VerifyAllReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    setRunning(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/verify/all");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Verification run failed");
+      setReport(data);
+    } catch (err) {
+      setReport(null);
+      setError(err instanceof Error ? err.message : "Verification run failed");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const clean = report && report.counts.failed === 0 && report.continuity.intact;
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-bold text-slate-900">Verify all records</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Checks every journal entry and invoice in the ledger, and looks for records that have been deleted.
+          </p>
+        </div>
+        <Button onClick={run} disabled={running}>
+          {running ? "Verifying…" : "Verify all"}
+        </Button>
+      </div>
+
+      {error && <p className="mt-4 text-sm font-medium text-red-600">{error}</p>}
+
+      {report && (
+        <div className="mt-5 space-y-4">
+          <p
+            className={`rounded-lg px-4 py-3 text-sm font-bold ${
+              clean ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
+            }`}
+          >
+            {clean
+              ? "No tampering detected."
+              : `Problems found: ${report.counts.failed} failed record(s)${
+                  report.continuity.intact ? "" : ` and ${report.continuity.gaps.length} gap(s) in the chain`
+                }.`}
+          </p>
+
+          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+            <div>
+              <dt className="font-bold text-slate-500">Checked</dt>
+              <dd className="text-slate-800">{report.checkedRecords}</dd>
+            </div>
+            <div>
+              <dt className="font-bold text-slate-500">Verified</dt>
+              <dd className="font-bold text-green-600">{report.counts.verified}</dd>
+            </div>
+            <div>
+              <dt className="font-bold text-slate-500">Pending checkpoint</dt>
+              <dd className="font-bold text-amber-600">{report.counts.pending}</dd>
+            </div>
+            <div>
+              <dt className="font-bold text-slate-500">Failed</dt>
+              <dd className={`font-bold ${report.counts.failed ? "text-red-600" : "text-slate-800"}`}>
+                {report.counts.failed}
+              </dd>
+            </div>
+          </dl>
+
+          {report.truncated && (
+            <p className="rounded-lg bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
+              Only the newest {report.checkedRecords} of {report.totalRecords} records were checked in this run.
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-bold text-slate-500">Chain continuity:</span>
+            <Badge tone={report.continuity.intact ? "green" : "red"}>
+              {report.continuity.intact ? "Intact, no missing records" : `${report.continuity.gaps.length} gap(s)`}
+            </Badge>
+          </div>
+          {!report.continuity.intact && (
+            <ul className="space-y-1 rounded-lg bg-red-50 px-4 py-3 text-xs font-medium text-red-700">
+              {report.continuity.gaps.map((g, i) => (
+                <li key={i}>{g.detail}</li>
+              ))}
+            </ul>
+          )}
+
+          {report.failures.length > 0 && (
+            <Table>
+              <THead>
+                <tr>
+                  <TH>Record type</TH>
+                  <TH>Problem</TH>
+                  <TH>Recorded</TH>
+                  <TH></TH>
+                </tr>
+              </THead>
+              <TBody>
+                {report.failures.map((f) => (
+                  <tr key={f.chainId}>
+                    <TD>{f.recordType ? f.recordType.replace("_", " ") : "Unknown"}</TD>
+                    <TD>{SHORT_REASONS[f.failureReason] ?? f.failureReason}</TD>
+                    <TD>{f.createdAt ? formatDateTime(f.createdAt) : "—"}</TD>
+                    <TD>
+                      {f.recordId && (
+                        <Link
+                          href={`/verification?recordId=${f.recordId}&chainId=${f.chainId}`}
+                          className="text-sm font-bold text-primary hover:underline"
+                        >
+                          Details
+                        </Link>
+                      )}
+                    </TD>
+                  </tr>
+                ))}
+              </TBody>
+            </Table>
+          )}
+
+          <p className="text-xs text-slate-400">
+            Run {formatDateTime(report.checkedAt)} in {(report.durationMs / 1000).toFixed(1)} s. Records still
+            awaiting a checkpoint are intact but not yet covered by a signature.
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+}
 
 type ProofStep = { hash: string; position: "left" | "right" };
 type VerificationResult = {
@@ -58,6 +216,8 @@ function VerificationForm() {
   const [result, setResult] = useState<VerificationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const { session } = useSession();
+  const isAuditor = session?.user.role === "AUDITOR";
 
   async function handleVerify(e: React.FormEvent) {
     e.preventDefault();
@@ -102,6 +262,8 @@ function VerificationForm() {
           </Button>
         </form>
       </Card>
+
+      {isAuditor && <VerifyAllPanel />}
 
       {error && <p className="text-sm font-medium text-red-600">{error}</p>}
 
