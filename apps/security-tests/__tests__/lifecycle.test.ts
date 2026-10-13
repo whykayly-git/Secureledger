@@ -149,6 +149,74 @@ describe("report totals after a void", () => {
   });
 });
 
+describe("deleted draft invoices", () => {
+  async function chainedDraft() {
+    const invoice = await prisma.invoice.create({
+      data: {
+        organisationId: ctx.organisationId,
+        customerName: "Draft Customer",
+        lineItems: { items: [], receivableAccountId: ctx.cashAccountId },
+        amount: 10,
+        status: "DRAFT",
+        dueDate: new Date("2026-12-01T00:00:00.000Z"),
+      },
+    });
+    const row = await prisma.$transaction((tx) =>
+      appendLedgerChainEntry(tx, {
+        organisationId: ctx.organisationId,
+        recordType: "INVOICE",
+        recordId: invoice.id,
+        fields: invoiceHashFields(invoice),
+      })
+    );
+    return { invoice, row };
+  }
+  const logDeletion = (invoiceId: string) =>
+    prisma.adminActionLog.create({
+      data: {
+        organisationId: ctx.organisationId,
+        userId: ctx.userId,
+        action: "DELETE_DRAFT_INVOICE",
+        targetType: "INVOICE",
+        targetId: invoiceId,
+      },
+    });
+
+  it("the leftover row of a deleted draft verifies when the deletion was logged", async () => {
+    const { invoice, row } = await chainedDraft();
+    await prisma.invoice.delete({ where: { id: invoice.id } });
+    await logDeletion(invoice.id);
+    await runCheckpoint();
+
+    expect((await verdictOf(row.id)).verdict).toBe("verified");
+  });
+
+  it("a deleted invoice with no logged deletion is flagged", async () => {
+    const { invoice, row } = await chainedDraft();
+    await prisma.invoice.delete({ where: { id: invoice.id } });
+
+    expect((await verdictOf(row.id)).verdict).toBe("failed");
+  });
+
+  it("an issued invoice deleted from the database is flagged even if a deletion was logged", async () => {
+    const { invoice, row } = await chainedDraft();
+    await prisma.invoice.update({ where: { id: invoice.id }, data: { status: "ISSUED" } });
+    const issued = await prisma.invoice.findFirstOrThrow({ where: { id: invoice.id } });
+    await prisma.$transaction((tx) =>
+      appendLedgerChainEntry(tx, {
+        organisationId: ctx.organisationId,
+        recordType: "INVOICE",
+        recordId: invoice.id,
+        fields: invoiceHashFields(issued),
+      })
+    );
+    await prisma.invoice.delete({ where: { id: invoice.id } });
+    await logDeletion(invoice.id);
+
+    expect((await verdictOf(row.id)).verdict).toBe("failed");
+  });
+});
+
 describe("invoice lifecycle rows", () => {
   async function runInvoiceLifecycle(finalStatus: "PAID" | "VOIDED") {
     const invoice = await prisma.invoice.create({

@@ -87,6 +87,7 @@ const INVOICE_STATUS_PATHS: Record<string, string[][]> = {
  */
 async function recomputeStoredHash(chainEntry: {
   id: string;
+  hash: string;
   recordType: string;
   recordId: string;
   organisationId: string;
@@ -121,7 +122,24 @@ async function recomputeStoredHash(chainEntry: {
 
   if (recordType === "INVOICE") {
     const invoice = await prisma.invoice.findFirst({ where: { id: recordId, organisationId } });
-    if (!invoice) return null;
+    if (!invoice) {
+      // A draft invoice is chained when it is created and may then be deleted
+      // (only drafts can be), which leaves its chain row behind with nothing
+      // to recompute from. That is legitimate only when the row is the
+      // record's single chain row, so it never progressed past DRAFT, and the
+      // deletion was recorded in the administrative action log. The row's own
+      // chain link, checkpoint inclusion and signature are still checked by
+      // the caller. A missing record with later rows (it had been issued or
+      // paid), or with no logged deletion, remains a mismatch.
+      const [rowCount, deletion] = await Promise.all([
+        prisma.ledgerChain.count({ where: { organisationId, recordType: "INVOICE", recordId } }),
+        prisma.adminActionLog.findFirst({
+          where: { organisationId, action: "DELETE_DRAFT_INVOICE", targetType: "INVOICE", targetId: recordId },
+          select: { id: true },
+        }),
+      ]);
+      return rowCount === 1 && deletion ? chainEntry.hash : null;
+    }
 
     // An invoice is chained when it is created (DRAFT) and again at every
     // lifecycle transition, each time over its status AT THAT MOMENT, so an

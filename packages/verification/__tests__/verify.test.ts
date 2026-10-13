@@ -11,12 +11,18 @@ const mockChainFindMany = jest.fn();
 const mockCheckpointFindUnique = jest.fn();
 const mockJournalEntryFindUnique = jest.fn();
 const mockInvoiceFindUnique = jest.fn();
+const mockChainCount = jest.fn();
+const mockAdminLogFindFirst = jest.fn();
 
 jest.mock("@secureledger/db", () => ({
   prisma: {
     ledgerChain: {
       findFirst: (...args: unknown[]) => mockChainFindFirst(...args),
       findMany: (...args: unknown[]) => mockChainFindMany(...args),
+      count: (...args: unknown[]) => mockChainCount(...args),
+    },
+    adminActionLog: {
+      findFirst: (...args: unknown[]) => mockAdminLogFindFirst(...args),
     },
     ledgerCheckpoint: {
       findUnique: (...args: unknown[]) => mockCheckpointFindUnique(...args),
@@ -127,6 +133,8 @@ beforeEach(() => {
   mockCheckpointFindUnique.mockReset();
   mockJournalEntryFindUnique.mockReset();
   mockInvoiceFindUnique.mockReset();
+  mockChainCount.mockReset();
+  mockAdminLogFindFirst.mockReset();
 });
 
 describe("verifyLedgerChainEntryById — not found / pending", () => {
@@ -701,5 +709,72 @@ describe("verifyLedgerChainEntryById — invoice lifecycle rows", () => {
     const result = await verifyLedgerChainEntryById("chain-2", ORG_ID);
     expect(result?.verdict).toBe("failed");
     if (result && result.verdict !== "pending") expect(result.failureReason).toBe("hash_mismatch");
+  });
+});
+
+describe("verifyLedgerChainEntryById — deleted draft invoices", () => {
+  const draftInvoice = {
+    id: "inv-draft",
+    organisationId: ORG_ID,
+    customerName: "Draft Co",
+    lineItems: { items: [], receivableAccountId: "cash-1" },
+    amount: 10,
+    status: "DRAFT",
+    dueDate: new Date("2026-02-01T00:00:00.000Z"),
+  };
+
+  /** A chain row for an invoice whose record has since been deleted. */
+  function installOrphanRow(opts: { rowCount: number; deletionLogged: boolean }) {
+    const hash = computeChainHash(invoiceHashFields(draftInvoice), null);
+    const row = {
+      id: "chain-0",
+      organisationId: ORG_ID,
+      recordId: draftInvoice.id,
+      recordType: "INVOICE",
+      hash,
+      previousHash: null,
+      checkpointId: null,
+      createdAt: new Date("2026-01-05T00:00:00.000Z"),
+    };
+    mockChainFindFirst.mockImplementation((args: any) => Promise.resolve(args.where?.id === "chain-0" ? row : null));
+    mockInvoiceFindUnique.mockResolvedValue(null);
+    mockChainCount.mockResolvedValue(opts.rowCount);
+    mockAdminLogFindFirst.mockResolvedValue(opts.deletionLogged ? { id: "log-1" } : null);
+  }
+
+  it("does not flag the leftover row of a draft invoice whose deletion was logged", async () => {
+    installOrphanRow({ rowCount: 1, deletionLogged: true });
+    const result = await verifyLedgerChainEntryById("chain-0", ORG_ID);
+    expect(result?.verdict).toBe("pending");
+  });
+
+  it("flags a missing invoice when no deletion was logged", async () => {
+    installOrphanRow({ rowCount: 1, deletionLogged: false });
+    const result = await verifyLedgerChainEntryById("chain-0", ORG_ID);
+    expect(result?.verdict).toBe("failed");
+    if (result && result.verdict !== "pending") expect(result.failureReason).toBe("hash_mismatch");
+  });
+
+  it("flags a missing invoice that had progressed past draft, even if a deletion was logged", async () => {
+    installOrphanRow({ rowCount: 2, deletionLogged: true });
+    const result = await verifyLedgerChainEntryById("chain-0", ORG_ID);
+    expect(result?.verdict).toBe("failed");
+  });
+
+  it("still checks the leftover row's own chain link", async () => {
+    installOrphanRow({ rowCount: 1, deletionLogged: true });
+    mockChainFindFirst.mockImplementation((args: any) => {
+      if (args.where?.id === "chain-0")
+        return Promise.resolve({
+          id: "chain-0", organisationId: ORG_ID, recordId: draftInvoice.id, recordType: "INVOICE",
+          hash: computeChainHash(invoiceHashFields(draftInvoice), "forged-previous"), previousHash: "forged-previous",
+          checkpointId: null, createdAt: new Date("2026-01-05T00:00:00.000Z"),
+        });
+      if (args.where?.createdAt) return Promise.resolve({ hash: "the-real-previous-hash" });
+      return Promise.resolve(null);
+    });
+    const result = await verifyLedgerChainEntryById("chain-0", ORG_ID);
+    expect(result?.verdict).toBe("failed");
+    if (result && result.verdict !== "pending") expect(result.failureReason).toBe("chain_link_broken");
   });
 });
