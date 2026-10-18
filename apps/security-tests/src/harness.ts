@@ -3,6 +3,11 @@ import { generateSigningKeyPair } from "@secureledger/crypto";
 import { appendLedgerChainEntry, journalEntryHashFields } from "@secureledger/ledger";
 import { runCheckpointCycle } from "@secureledger/checkpoint-worker/cycle";
 
+// Every integration test runs with ledger row authentication switched on, the way
+// production does, so rows are tagged by the real write path and checked by the real
+// verifier and worker. Tests that need it off or different set the variable themselves.
+process.env.LEDGER_AUTH_KEY ??= "test-only-ledger-auth-key-0123456789abcdef";
+
 /**
  * Shared ECDSA key pair for the whole suite run. Generated once so every
  * scenario's checkpoints are signed with the same key, and the public half

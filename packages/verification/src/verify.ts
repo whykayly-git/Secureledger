@@ -7,10 +7,15 @@ import {
   verifyRootSignature,
   ProofStep,
 } from "@secureledger/crypto";
-import { journalEntryHashFields, invoiceHashFields } from "@secureledger/ledger";
+import { journalEntryHashFields, invoiceHashFields, getLedgerAuthKey, judgeChainRow } from "@secureledger/ledger";
 import { getCheckpointPublicKey } from "./publicKey";
 
-export type FailureReason = "hash_mismatch" | "chain_link_broken" | "merkle_inclusion_invalid" | "signature_invalid";
+export type FailureReason =
+  | "hash_mismatch"
+  | "chain_link_broken"
+  | "auth_tag_invalid"
+  | "merkle_inclusion_invalid"
+  | "signature_invalid";
 
 export type VerificationResult =
   | {
@@ -245,6 +250,17 @@ export async function verifyLedgerChainEntryById(
   const chainLinkIntact = await isChainLinkIntact(chainEntry);
   if (!chainLinkIntact) {
     return failed("chain_link_broken");
+  }
+
+  // A forger who can write to the database can compute a correct hash and link,
+  // because the hash method is public. They cannot compute the keyed tag. This
+  // is the check that separates a row the application wrote from one that was
+  // inserted behind its back.
+  if (getLedgerAuthKey()) {
+    const status = judgeChainRow(chainEntry);
+    if (status === "missing" || status === "invalid") {
+      return failed("auth_tag_invalid");
+    }
   }
 
   if (!chainEntry.checkpointId) {

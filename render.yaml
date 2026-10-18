@@ -17,6 +17,8 @@ services:
         generateValue: true
       - key: CHECKPOINT_PUBLIC_KEY
         sync: false
+      - key: LEDGER_AUTH_KEY
+        sync: false
       - key: PLATFORM_ADMIN_EMAILS
         sync: false
       - key: NODE_ENV
@@ -35,6 +37,8 @@ services:
           name: secureledger-db
           property: connectionString
       - key: CHECKPOINT_PRIVATE_KEY
+        sync: false
+      - key: LEDGER_AUTH_KEY
         sync: false
       - key: CHECKPOINT_POLL_INTERVAL_MS
         value: "10000"

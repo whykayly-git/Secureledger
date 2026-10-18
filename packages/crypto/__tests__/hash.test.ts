@@ -1,4 +1,4 @@
-import { computeChainHash, sha256Hex } from "../src/hash";
+import { computeChainHash, computeChainAuthTag, verifyChainAuthTag, sha256Hex } from "../src/hash";
 
 describe("sha256Hex", () => {
   it("produces a 64-char lowercase hex digest", () => {
@@ -101,5 +101,36 @@ describe("computeChainHash", () => {
   it("always returns a 64-char lowercase hex digest regardless of input shape", () => {
     const result = computeChainHash({ a: 1, b: { c: [1, 2, 3] }, d: "text" }, "some-previous-hash");
     expect(result).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("chain authentication tag", () => {
+  const key = "a-test-key-that-is-at-least-32-characters-long";
+  const fields = { organisationId: "org-1", recordType: "JOURNAL_ENTRY", recordId: "rec-1", sequenceNumber: 4, hash: "ab12" };
+
+  it("is deterministic for the same key and fields", () => {
+    expect(computeChainAuthTag(key, fields)).toBe(computeChainAuthTag(key, fields));
+  });
+
+  it("verifies a tag made with the same key", () => {
+    expect(verifyChainAuthTag(key, fields, computeChainAuthTag(key, fields))).toBe(true);
+  });
+
+  it("rejects a tag made with a different key", () => {
+    expect(verifyChainAuthTag(key, fields, computeChainAuthTag("another-key-that-is-also-32-characters-xx", fields))).toBe(false);
+  });
+
+  it.each([
+    ["organisation", { organisationId: "org-2" }],
+    ["record type", { recordType: "INVOICE" }],
+    ["record id", { recordId: "rec-2" }],
+    ["sequence number", { sequenceNumber: 5 }],
+    ["hash", { hash: "ab13" }],
+  ])("rejects a tag when the %s differs", (_name, change) => {
+    expect(verifyChainAuthTag(key, { ...fields, ...change }, computeChainAuthTag(key, fields))).toBe(false);
+  });
+
+  it("rejects a tag of the wrong length without throwing", () => {
+    expect(verifyChainAuthTag(key, fields, "short")).toBe(false);
   });
 });

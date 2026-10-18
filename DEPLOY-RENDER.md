@@ -15,6 +15,8 @@ Copy the two base64 lines it prints:
 - `CHECKPOINT_PUBLIC_KEY` goes to the **web** service only.
 - `CHECKPOINT_PRIVATE_KEY` goes to the **worker** service only.
 
+`LEDGER_AUTH_KEY` is a third secret, a random string that goes to **both** the web and worker services with the **same value**. Generate it with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. It authenticates every ledger row, so someone with only database access cannot forge a row that passes verification. Never put it anywhere the database can read it, and do not change it later without a plan: rows tagged with the old value would fail verification.
+
 Do not reuse your local keys, do not commit these, and keep the private key out of the web service. `JWT_SECRET` is generated for you by Render.
 
 ## 2. Push the repo to GitHub
@@ -27,6 +29,7 @@ Do not reuse your local keys, do not commit these, and keep the private key out 
 2. Render reads `render.yaml` and lists: `secureledger-web`, `secureledger-checkpoint-worker`, `secureledger-db`.
 3. It asks for the values marked `sync: false`:
    - `CHECKPOINT_PUBLIC_KEY` (web): paste the public key line.
+   - `LEDGER_AUTH_KEY` (web and worker): paste the same value in both.
    - `PLATFORM_ADMIN_EMAILS` (web): your admin email(s), comma-separated.
    - `CHECKPOINT_PRIVATE_KEY` (worker): paste the private key line.
 4. Click **Apply**. If Render rejects a plan name in `render.yaml`, choose the plan in the dashboard instead.

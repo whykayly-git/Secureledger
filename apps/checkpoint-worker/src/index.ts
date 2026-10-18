@@ -1,5 +1,6 @@
 import cron from "node-cron";
 import { prisma } from "@secureledger/db";
+import { getLedgerAuthKey } from "@secureledger/ledger";
 import { config } from "./config";
 import { runCheckpointCycle } from "./cycle";
 import { runVerificationCycle } from "./verificationCycle";
@@ -60,7 +61,13 @@ async function main(): Promise<void> {
     maxIntervalMs: config.maxIntervalMs,
     batchThreshold: config.batchThreshold,
     verificationIntervalMs: config.verificationIntervalMs,
+    rowAuthentication: getLedgerAuthKey() ? "on" : "OFF",
   });
+  if (!getLedgerAuthKey()) {
+    logger.error(
+      "LEDGER_AUTH_KEY is not set: rows are NOT being authenticated, so a forged row with a correct hash would be signed. Set it to the same value as the web app."
+    );
+  }
 
   await prisma.$connect();
   logger.info("Connected to database");

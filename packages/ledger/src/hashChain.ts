@@ -1,5 +1,6 @@
 import { computeChainHash } from "@secureledger/crypto";
 import type { Prisma, LedgerChain, LedgerRecordType } from "@secureledger/db";
+import { signChainRow } from "./authTag";
 
 export type AppendChainParams = {
   organisationId: string;
@@ -56,6 +57,10 @@ export async function appendLedgerChainEntry(
   const hash = computeChainHash(fields, previousHash);
   const sequenceNumber = (tip?.sequenceNumber ?? 0) + 1;
 
+  // Keyed tag over this row's position and hash. A forger with database access
+  // can compute `hash` (the method is public) but not this.
+  const authTag = signChainRow({ organisationId, recordType, recordId, sequenceNumber, hash });
+
   return tx.ledgerChain.create({
     data: {
       organisationId,
@@ -64,6 +69,7 @@ export async function appendLedgerChainEntry(
       hash,
       previousHash,
       sequenceNumber,
+      authTag,
     },
   });
 }

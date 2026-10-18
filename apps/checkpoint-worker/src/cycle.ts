@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@secureledger/db";
+import { getLedgerAuthKey, judgeChainRow } from "@secureledger/ledger";
 import { buildCheckpointPayload, decideCheckpoint } from "./checkpoint";
 import { logger } from "./logger";
 
@@ -57,8 +58,38 @@ export async function runCheckpointCycle(prisma: PrismaClient, options: CycleOpt
         where: { organisationId, checkpointId: null },
         orderBy: { createdAt: "asc" },
         take: options.batchThreshold * 4,
-        select: { id: true, hash: true, createdAt: true },
+        select: {
+          id: true,
+          hash: true,
+          createdAt: true,
+          organisationId: true,
+          recordType: true,
+          recordId: true,
+          sequenceNumber: true,
+          authTag: true,
+        },
       });
+
+      // A signature means "this was in the database when signed", so the worker
+      // must first be sure the application wrote every row it is about to sign.
+      // The hash method is public, so a row inserted straight into the database
+      // can carry a perfectly valid hash and link; only the keyed tag tells it
+      // apart. One bad row blocks the whole batch: the Merkle tree and the
+      // checkpoint's record count both cover it, so it cannot be left out.
+      if (getLedgerAuthKey()) {
+        const rejected = rows.filter((r) => {
+          const status = judgeChainRow(r);
+          return status === "missing" || status === "invalid";
+        });
+        if (rejected.length > 0) {
+          logger.error("ALERT: refusing to sign a checkpoint, some rows were not written by the application", {
+            organisationId,
+            rejectedCount: rejected.length,
+            rejectedChainIds: rejected.slice(0, 20).map((r) => r.id),
+          });
+          continue;
+        }
+      }
 
       const payload = buildCheckpointPayload(rows, options.privateKeyPem);
 

@@ -221,6 +221,13 @@ model LedgerChain {
   // sequence rather than relying on timestamp ordering alone.
   sequenceNumber Int
 
+  // Keyed HMAC over (organisation, record, sequence, hash), computed with
+  // LEDGER_AUTH_KEY, which the database never sees. The hash method is public,
+  // so a forger with database access can produce a valid hash but not this
+  // tag. Null only on rows written before tagging was switched on, which are
+  // accepted only if created before LEDGER_AUTH_START.
+  authTag        String?
+
   organisation   Organisation      @relation(fields: [organisationId], references: [id])
   checkpoint     LedgerCheckpoint? @relation(fields: [checkpointId], references: [id])
 

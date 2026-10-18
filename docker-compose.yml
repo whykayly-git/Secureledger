@@ -43,6 +43,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       # Public key only — the private key never enters this service's environment.
       CHECKPOINT_PUBLIC_KEY: ${CHECKPOINT_PUBLIC_KEY}
+      LEDGER_AUTH_KEY: ${LEDGER_AUTH_KEY}
       NODE_ENV: production
     ports:
       - "3000:3000"
@@ -61,6 +62,7 @@ services:
       DATABASE_URL: postgresql://secureledger:secureledger@db:5432/secureledger?schema=public
       # Private key held ONLY here — never in the web service's environment.
       CHECKPOINT_PRIVATE_KEY: ${CHECKPOINT_PRIVATE_KEY}
+      LEDGER_AUTH_KEY: ${LEDGER_AUTH_KEY}
       CHECKPOINT_POLL_INTERVAL_MS: "60000"
       CHECKPOINT_MAX_INTERVAL_MS: "3600000"
       CHECKPOINT_BATCH_THRESHOLD: "500"

@@ -1,4 +1,5 @@
 import { createPublicKey } from "crypto";
+import { getLedgerAuthKey } from "@secureledger/ledger";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -23,6 +24,10 @@ const privateKeyPem = decodePrivateKey(requireEnv("CHECKPOINT_PRIVATE_KEY"));
 if (!process.env.CHECKPOINT_PUBLIC_KEY) {
   process.env.CHECKPOINT_PUBLIC_KEY = createPublicKey(privateKeyPem).export({ type: "spki", format: "pem" }).toString();
 }
+
+// Throws at startup in production if the ledger authentication key is missing,
+// rather than signing checkpoints over rows it cannot check.
+getLedgerAuthKey();
 
 export const config = {
   databaseUrl: requireEnv("DATABASE_URL"),

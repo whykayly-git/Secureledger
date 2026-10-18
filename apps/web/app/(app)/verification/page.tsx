@@ -24,6 +24,7 @@ type VerifyAllReport = {
 const SHORT_REASONS: Record<string, string> = {
   hash_mismatch: "Record changed after it was chained",
   chain_link_broken: "Link to the previous record is broken",
+  auth_tag_invalid: "Not written by the application (authentication tag missing or wrong)",
   merkle_inclusion_invalid: "Not covered by its signed checkpoint",
   signature_invalid: "Checkpoint signature is invalid",
   verification_error: "Could not be verified (checkpoint data missing)",
@@ -259,7 +260,7 @@ type VerificationResult = {
   message?: string;
   inclusionValid?: boolean;
   signatureValid?: boolean;
-  failureReason?: "hash_mismatch" | "chain_link_broken" | "merkle_inclusion_invalid" | "signature_invalid" | null;
+  failureReason?: "hash_mismatch" | "chain_link_broken" | "auth_tag_invalid" | "merkle_inclusion_invalid" | "signature_invalid" | null;
   leafIndex?: number;
   proof?: ProofStep[];
   checkpoint?: {
@@ -286,6 +287,8 @@ const FAILURE_REASON_MESSAGES: Record<string, string> = {
     "The record's data no longer matches what was hash-chained at write time — the underlying row has been altered since it was posted.",
   chain_link_broken:
     "This record's link to the previous entry in the chain doesn't match the actual prior record — the chain has been broken or forged.",
+  auth_tag_invalid:
+    "This record has the right hash and link but not the application's authentication tag, so it was not written by the application. It may have been inserted directly into the database.",
   merkle_inclusion_invalid:
     "The stored hash does not reconstruct to its checkpoint's signed Merkle root.",
   signature_invalid: "The checkpoint's signature does not validate against the checkpoint service's public key.",
