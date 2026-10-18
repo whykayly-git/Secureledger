@@ -171,6 +171,7 @@ export async function teardownOrganisation(organisationId: string): Promise<void
   await prisma.journalEntry.deleteMany({ where: { organisationId } });
   await prisma.ledgerCheckpoint.deleteMany({ where: { organisationId } });
   await prisma.adminActionLog.deleteMany({ where: { organisationId } });
+  await prisma.verificationRun.deleteMany({ where: { organisationId } });
   await prisma.account.deleteMany({ where: { organisationId } });
   await prisma.user.deleteMany({ where: { organisationId } });
   await prisma.organisation.delete({ where: { id: organisationId } });

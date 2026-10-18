@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
+import { VerificationAlertBanner } from "@/components/VerificationAlertBanner";
 import { useSession } from "@/lib/useSession";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -27,6 +28,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         )}
+        <VerificationAlertBanner session={session} />
         <Topbar session={session} />
         <main className="flex-1 p-6">{children}</main>
       </div>

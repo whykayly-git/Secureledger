@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Card } from "@/components/Card";
@@ -29,7 +29,88 @@ const SHORT_REASONS: Record<string, string> = {
   verification_error: "Could not be verified (checkpoint data missing)",
 };
 
-function VerifyAllPanel() {
+type RunRow = {
+  id: string;
+  source: string;
+  createdAt: string;
+  checkedRecords: number;
+  verified: number;
+  pending: number;
+  failed: number;
+  continuityIntact: boolean;
+  gapCount: number;
+  hasProblems: boolean;
+  acknowledged: boolean;
+};
+
+function RunHistoryCard({ refreshKey }: { refreshKey: number }) {
+  const [runs, setRuns] = useState<RunRow[] | null>(null);
+
+  useEffect(() => {
+    fetch("/api/verify/runs?limit=15")
+      .then((r) => (r.ok ? r.json() : { runs: [] }))
+      .then((d) => setRuns(d.runs))
+      .catch(() => setRuns([]));
+  }, [refreshKey]);
+
+  const lastScheduled = runs?.find((r) => r.source === "SCHEDULED");
+
+  return (
+    <Card>
+      <h2 className="font-bold text-slate-900">Verification history</h2>
+      <p className="mt-1 text-sm text-slate-600">
+        The system also verifies the whole ledger automatically in the background and raises an alert here if it
+        finds a problem.{" "}
+        {lastScheduled
+          ? `Last automatic run: ${formatDateTime(lastScheduled.createdAt)}.`
+          : "No automatic run has completed yet."}
+      </p>
+      {runs && runs.length > 0 && (
+        <div className="mt-4 overflow-x-auto">
+          <Table>
+            <THead>
+              <tr>
+                <TH>Time</TH>
+                <TH>Run</TH>
+                <TH className="text-right">Checked</TH>
+                <TH className="text-right">Verified</TH>
+                <TH className="text-right">Pending</TH>
+                <TH className="text-right">Failed</TH>
+                <TH>Chain</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {runs.map((r) => (
+                <tr key={r.id}>
+                  <TD className="whitespace-nowrap">{formatDateTime(r.createdAt)}</TD>
+                  <TD>
+                    <Badge tone={r.source === "SCHEDULED" ? "blue" : "neutral"}>
+                      {r.source === "SCHEDULED" ? "Automatic" : "Manual"}
+                    </Badge>
+                  </TD>
+                  <TD className="text-right">{r.checkedRecords}</TD>
+                  <TD className="text-right">{r.verified}</TD>
+                  <TD className="text-right">{r.pending}</TD>
+                  <TD className={`text-right font-bold ${r.failed ? "text-red-600" : ""}`}>{r.failed}</TD>
+                  <TD>
+                    {r.continuityIntact ? (
+                      "Intact"
+                    ) : (
+                      <span className="font-bold text-red-600">{r.gapCount} gap(s)</span>
+                    )}
+                    {r.hasProblems && r.acknowledged && <span className="ml-2 text-xs text-slate-400">acknowledged</span>}
+                  </TD>
+                </tr>
+              ))}
+            </TBody>
+          </Table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function VerifyAllPanel({ onFinished }: { onFinished: () => void }) {
   const [running, setRunning] = useState(false);
   const [report, setReport] = useState<VerifyAllReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +123,7 @@ function VerifyAllPanel() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Verification run failed");
       setReport(data);
+      onFinished();
     } catch (err) {
       setReport(null);
       setError(err instanceof Error ? err.message : "Verification run failed");
@@ -218,6 +300,7 @@ function VerificationForm() {
   const [loading, setLoading] = useState(false);
   const { session } = useSession();
   const isAuditor = session?.user.role === "AUDITOR";
+  const [historyKey, setHistoryKey] = useState(0);
 
   async function handleVerify(e: React.FormEvent) {
     e.preventDefault();
@@ -263,7 +346,8 @@ function VerificationForm() {
         </form>
       </Card>
 
-      {isAuditor && <VerifyAllPanel />}
+      {isAuditor && <VerifyAllPanel onFinished={() => setHistoryKey((k) => k + 1)} />}
+      {isAuditor && <RunHistoryCard refreshKey={historyKey} />}
 
       {error && <p className="text-sm font-medium text-red-600">{error}</p>}
 

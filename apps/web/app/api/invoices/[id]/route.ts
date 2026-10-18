@@ -1,10 +1,33 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@secureledger/db";
+import type { InvoiceStatus, Prisma } from "@secureledger/db";
 import { requireSession, requireRole } from "@/lib/session";
 import { ApiError, handleApiError } from "@/lib/api";
 import { appendLedgerChainEntry, invoiceHashFields, journalEntryHashFields } from "@secureledger/ledger";
 import { InvoiceLineItems } from "@/lib/invoiceTypes";
 import { createReversingEntry, logAdminAction } from "@/lib/void";
+
+/**
+ * Moves an invoice out of one of the `from` statuses, as the first step of the
+ * transaction. The status check at the top of the handler is only a quick
+ * rejection: two requests can both pass it before either commits. This
+ * conditional update is the real guard. The second request waits on the row
+ * lock, then finds the status already changed, matches no row and is refused,
+ * so the invoice can never be issued, paid or voided twice.
+ */
+async function claimInvoiceStatus(
+  tx: Prisma.TransactionClient,
+  invoice: { id: string; organisationId: string },
+  from: InvoiceStatus[],
+  to: InvoiceStatus,
+  message: string
+) {
+  const claimed = await tx.invoice.updateMany({
+    where: { id: invoice.id, organisationId: invoice.organisationId, status: { in: from } },
+    data: { status: to },
+  });
+  if (claimed.count !== 1) throw new ApiError(message, 409);
+}
 
 export async function GET(_request: Request, { params }: { params: { id: string } }) {
   try {
@@ -57,6 +80,8 @@ export async function PATCH(request: Request, { params }: { params: { id: string
       }
 
       const result = await prisma.$transaction(async (tx) => {
+        await claimInvoiceStatus(tx, invoice, ["ISSUED", "PAID"], "VOIDED", "Only issued or paid invoices can be voided");
+
         const reversingEntry = await createReversingEntry(tx, {
           organisationId: session.organisationId,
           originalEntry: linkedEntry,
@@ -93,6 +118,8 @@ export async function PATCH(request: Request, { params }: { params: { id: string
       }
 
       const updated = await prisma.$transaction(async (tx) => {
+        await claimInvoiceStatus(tx, invoice, ["DRAFT"], "ISSUED", "Only draft invoices can be issued");
+
         // Group revenue by income account in case multiple line items share one.
         const revenueByAccount = new Map<string, number>();
         for (const item of lineItems.items) {
@@ -130,7 +157,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
 
         const invoiceUpdated = await tx.invoice.update({
           where: { id: invoice.id },
-          data: { status: "ISSUED", relatedJournalEntryId: journalEntry.id },
+          data: { relatedJournalEntryId: journalEntry.id },
         });
 
         await appendLedgerChainEntry(tx, {
@@ -161,6 +188,8 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     }
 
     const updated = await prisma.$transaction(async (tx) => {
+      await claimInvoiceStatus(tx, invoice, ["ISSUED"], "PAID", "Only issued invoices can be marked as paid");
+
       const journalEntry = await tx.journalEntry.create({
         data: {
           organisationId: session.organisationId,
@@ -185,10 +214,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
         fields: journalEntryHashFields(journalEntry),
       });
 
-      const invoiceUpdated = await tx.invoice.update({
-        where: { id: invoice.id },
-        data: { status: "PAID" },
-      });
+      const invoiceUpdated = await tx.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
 
       await appendLedgerChainEntry(tx, {
         organisationId: session.organisationId,
@@ -221,7 +247,13 @@ export async function DELETE(_request: Request, { params }: { params: { id: stri
     }
 
     await prisma.$transaction(async (tx) => {
-      await tx.invoice.delete({ where: { id: invoice.id } });
+      // Conditional on still being a draft, so a concurrent issue cannot be deleted from under it.
+      const deleted = await tx.invoice.deleteMany({
+        where: { id: invoice.id, organisationId: session.organisationId, status: "DRAFT" },
+      });
+      if (deleted.count !== 1) {
+        throw new ApiError("Only draft invoices can be deleted — issued/paid invoices must be voided instead", 409);
+      }
       await logAdminAction(tx, {
         organisationId: session.organisationId,
         userId: session.userId,

@@ -5,6 +5,8 @@ FROM base AS deps
 COPY package.json package-lock.json* ./
 COPY packages/db/package.json packages/db/package.json
 COPY packages/crypto/package.json packages/crypto/package.json
+COPY packages/ledger/package.json packages/ledger/package.json
+COPY packages/verification/package.json packages/verification/package.json
 COPY apps/checkpoint-worker/package.json apps/checkpoint-worker/package.json
 RUN npm install --workspaces --include-workspace-root
 
@@ -12,11 +14,15 @@ FROM base AS build
 COPY --from=deps /repo/node_modules ./node_modules
 COPY packages/db packages/db
 COPY packages/crypto packages/crypto
+COPY packages/ledger packages/ledger
+COPY packages/verification packages/verification
 COPY apps/checkpoint-worker apps/checkpoint-worker
 COPY tsconfig.base.json ./
 RUN npx prisma generate --schema packages/db/prisma/schema.prisma
 RUN npm run build --workspace=packages/db
 RUN npm run build --workspace=packages/crypto
+RUN npm run build --workspace=packages/ledger
+RUN npm run build --workspace=packages/verification
 RUN npm run build --workspace=apps/checkpoint-worker
 
 FROM node:20-alpine AS runner
@@ -26,6 +32,10 @@ COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=build /repo/packages/db ./packages/db
 COPY --from=build /repo/packages/crypto/dist ./packages/crypto/dist
 COPY --from=build /repo/packages/crypto/package.json ./packages/crypto/package.json
+COPY --from=build /repo/packages/ledger/dist ./packages/ledger/dist
+COPY --from=build /repo/packages/ledger/package.json ./packages/ledger/package.json
+COPY --from=build /repo/packages/verification/dist ./packages/verification/dist
+COPY --from=build /repo/packages/verification/package.json ./packages/verification/package.json
 COPY --from=build /repo/apps/checkpoint-worker/dist ./apps/checkpoint-worker/dist
 COPY --from=build /repo/apps/checkpoint-worker/package.json ./apps/checkpoint-worker/package.json
 

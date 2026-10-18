@@ -64,6 +64,8 @@ services:
       CHECKPOINT_POLL_INTERVAL_MS: "60000"
       CHECKPOINT_MAX_INTERVAL_MS: "3600000"
       CHECKPOINT_BATCH_THRESHOLD: "500"
+      # Full verification of every organisation, in milliseconds. 0 turns it off.
+      VERIFICATION_INTERVAL_MS: "3600000"
       HEALTH_PORT: "8081"
       NODE_ENV: production
     ports:

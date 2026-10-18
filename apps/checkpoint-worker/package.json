@@ -13,6 +13,10 @@
       "types": "./dist/cycle.d.ts",
       "default": "./dist/cycle.js"
     },
+    "./verificationCycle": {
+      "types": "./dist/verificationCycle.d.ts",
+      "default": "./dist/verificationCycle.js"
+    },
     "./checkpoint": {
       "types": "./dist/checkpoint.d.ts",
       "default": "./dist/checkpoint.js"
@@ -27,6 +31,8 @@
   "dependencies": {
     "@secureledger/crypto": "*",
     "@secureledger/db": "*",
+    "@secureledger/ledger": "*",
+    "@secureledger/verification": "*",
     "node-cron": "^3.0.3"
   },
   "devDependencies": {

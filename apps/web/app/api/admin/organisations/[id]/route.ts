@@ -74,6 +74,7 @@ export async function DELETE(_request: Request, { params }: { params: { id: stri
     await prisma.$transaction(async (tx) => {
       await tx.passwordResetToken.deleteMany({ where: { user: { organisationId: org.id } } });
       await tx.adminActionLog.deleteMany({ where: { organisationId: org.id } });
+      await tx.verificationRun.deleteMany({ where: { organisationId: org.id } });
       await tx.ledgerCheckpoint.deleteMany({ where: { organisationId: org.id } });
       await tx.account.deleteMany({ where: { organisationId: org.id } });
       await tx.user.deleteMany({ where: { organisationId: org.id } });

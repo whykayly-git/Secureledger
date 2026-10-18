@@ -2,6 +2,7 @@ import cron from "node-cron";
 import { prisma } from "@secureledger/db";
 import { config } from "./config";
 import { runCheckpointCycle } from "./cycle";
+import { runVerificationCycle } from "./verificationCycle";
 import { startHealthServer, WorkerHealthState } from "./health";
 import { logger } from "./logger";
 
@@ -11,7 +12,32 @@ const state: WorkerHealthState = {
   lastError: null,
 };
 
+let busy = false;
+
 async function tick(): Promise<void> {
+  // A verification of a large ledger can outlast one poll interval; never overlap two runs.
+  if (busy) return;
+  busy = true;
+  try {
+    await checkpointTick();
+    await verificationTick();
+  } finally {
+    busy = false;
+  }
+}
+
+async function verificationTick(): Promise<void> {
+  try {
+    await runVerificationCycle(prisma, {
+      intervalMs: config.verificationIntervalMs,
+      maxRecords: config.verificationMaxRecords,
+    });
+  } catch (err) {
+    logger.error("Unhandled error during scheduled verification", { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function checkpointTick(): Promise<void> {
   try {
     await runCheckpointCycle(prisma, {
       batchThreshold: config.batchThreshold,
@@ -33,6 +59,7 @@ async function main(): Promise<void> {
     pollIntervalMs: config.pollIntervalMs,
     maxIntervalMs: config.maxIntervalMs,
     batchThreshold: config.batchThreshold,
+    verificationIntervalMs: config.verificationIntervalMs,
   });
 
   await prisma.$connect();

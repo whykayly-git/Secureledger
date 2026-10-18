@@ -53,6 +53,7 @@ model Organisation {
   ledgerChain     LedgerChain[]
   ledgerCheckpoints LedgerCheckpoint[]
   adminActionLogs AdminActionLog[]
+  verificationRuns VerificationRun[]
 
   @@map("organisations")
 }
@@ -299,4 +300,36 @@ model AdminActionLog {
 
   @@index([organisationId, createdAt])
   @@map("admin_action_logs")
+}
+
+/// One full verification of an organisation's ledger: every chain row run
+/// through the real verifier plus the continuity sweep. Written by the
+/// checkpoint worker on a schedule (source SCHEDULED) and by the auditor's
+/// "Verify all" button (source MANUAL). A run with failed records or chain
+/// gaps carries a problemSignature, a hash of exactly what was found, so an
+/// auditor's acknowledgement stays valid until the findings change.
+model VerificationRun {
+  id                   String    @id @default(uuid())
+  organisationId       String
+  source               String
+  createdAt            DateTime  @default(now())
+  durationMs           Int
+  totalRecords         Int
+  checkedRecords       Int
+  verifiedCount        Int
+  pendingCount         Int
+  failedCount          Int
+  continuityIntact     Boolean
+  gapCount             Int
+  problemSignature     String?
+  details              Json?
+  acknowledgedAt       DateTime?
+  // Plain string, not a foreign key, so removing the user later cannot
+  // disturb the record of who acknowledged a finding.
+  acknowledgedByUserId String?
+
+  organisation         Organisation @relation(fields: [organisationId], references: [id])
+
+  @@index([organisationId, createdAt])
+  @@map("verification_runs")
 }
