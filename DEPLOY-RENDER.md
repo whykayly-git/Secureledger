@@ -2,7 +2,7 @@
 
 Three pieces run together: the **web app**, the **checkpoint worker** (must stay on 24/7), and a **Postgres database**. `render.yaml` defines all three.
 
-> Not yet tested: Docker isn't installed on the dev machine, so the Render build and `prisma migrate deploy` against real Postgres have not been run end to end. Do the checks in step 7 after the first deploy.
+> Tested on Render on 9 November 2026. The web and worker images built, the migrations ran against the Render Postgres database, and an entry posted through the live web app was checkpointed by the worker and showed **Verified** on the Verification page. Not tested: Docker Compose on a local machine (Docker isn't installed on the dev machine), the performance of the deployed instance, and running more than one web instance. The first deploy attempts failed for the reasons in "Problems met on the first deploys" below.
 
 ## 1. Generate production secrets (on your own computer)
 
@@ -38,7 +38,7 @@ Region is set to Frankfurt (usually closest to West Africa). Change `region` in 
 
 ## 4. Database migrations
 
-The web service runs `prisma migrate deploy` before each deploy (`preDeployCommand`). If your plan or Render rejects `preDeployCommand`, run it once from your computer instead:
+The web service runs `prisma migrate deploy` before each deploy (`preDeployCommand`), calling the Prisma CLI directly with absolute paths. While the very first deploy is still running, the worker may log `The table public.organisations does not exist`. That is harmless: the worker started before the migration finished, and the errors stop once the tables exist. If your plan or Render rejects `preDeployCommand`, run it once from your computer instead:
 
 ```bash
 DATABASE_URL="<External Database URL from the Render dashboard>" npx prisma migrate deploy --schema packages/db/prisma/schema.prisma
@@ -61,7 +61,18 @@ Web service, **Settings**, **Custom Domains**. Render provides HTTPS automatical
 - You can register, log in, and stay logged in across page loads (confirms `JWT_SECRET` works at runtime).
 - Post a journal entry. Dashboard "Pending Checkpoint" should return to 0 within about 30 seconds (confirms the worker is running and signing).
 - Open Verification for that entry and confirm it shows **Verified**.
-- Worker logs show "Checkpoint cycle completed".
+- Worker logs show "Checkpoint cycle completed", then "Scheduled verification completed with no problems".
+- At start-up the worker logs `"rowAuthentication":"on"`. If it says `OFF`, `LEDGER_AUTH_KEY` is missing on the worker.
+
+If Verification shows **Failed**: `signature_invalid` means the web service's `CHECKPOINT_PUBLIC_KEY` does not match the worker's private key (set both again from one new pair), and `auth_tag_invalid` means `LEDGER_AUTH_KEY` differs between the web service and the worker.
+
+## Problems met on the first deploys
+
+These were found by deploying, and are fixed in the repository. They are listed so they are not repeated.
+
+- **Build stage missing the root `package.json`.** Both images failed at `npm run build --workspace=...` with "Could not read package.json". Each Dockerfile's build stage now copies `package.json` and `package-lock.json`.
+- **No OpenSSL in the Alpine image.** Prisma warned that it could not detect libssl and would have generated the wrong query engine. Both images now run `apk add --no-cache openssl`.
+- **Pre-deploy migration exited with status 128 and no output.** The command was changed from `cd /repo && npx prisma migrate deploy ...` to a direct call to the Prisma CLI with absolute paths, and the next deploy passed. The root cause of the original exit was not confirmed.
 
 ## 8. Backups and costs
 
