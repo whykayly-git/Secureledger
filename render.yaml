@@ -7,7 +7,9 @@ services:
     plan: starter
     region: frankfurt
     healthCheckPath: /login
-    preDeployCommand: cd /repo && npx prisma migrate deploy --schema packages/db/prisma/schema.prisma
+    # Calls the Prisma CLI directly with absolute paths: no shell builtin and no npx, so the
+    # command does not depend on the working directory or on npm starting up in the container.
+    preDeployCommand: node /repo/node_modules/prisma/build/index.js migrate deploy --schema /repo/packages/db/prisma/schema.prisma
     envVars:
       - key: DATABASE_URL
         fromDatabase:
