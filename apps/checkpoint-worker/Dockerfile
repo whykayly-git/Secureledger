@@ -1,4 +1,6 @@
 FROM node:20-alpine AS base
+# Prisma needs OpenSSL to pick the right query engine; the Alpine image does not ship it.
+RUN apk add --no-cache openssl
 WORKDIR /repo
 
 FROM base AS deps
@@ -11,6 +13,7 @@ COPY apps/checkpoint-worker/package.json apps/checkpoint-worker/package.json
 RUN npm install --workspaces --include-workspace-root
 
 FROM base AS build
+COPY package.json package-lock.json* ./
 COPY --from=deps /repo/node_modules ./node_modules
 COPY packages/db packages/db
 COPY packages/crypto packages/crypto
@@ -26,6 +29,7 @@ RUN npm run build --workspace=packages/verification
 RUN npm run build --workspace=apps/checkpoint-worker
 
 FROM node:20-alpine AS runner
+RUN apk add --no-cache openssl
 WORKDIR /repo
 ENV NODE_ENV=production
 COPY --from=deps /repo/node_modules ./node_modules

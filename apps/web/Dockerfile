@@ -1,4 +1,6 @@
 FROM node:20-alpine AS base
+# Prisma needs OpenSSL to pick the right query engine; the Alpine image does not ship it.
+RUN apk add --no-cache openssl
 WORKDIR /repo
 
 FROM base AS deps
@@ -11,6 +13,7 @@ COPY apps/web/package.json apps/web/package.json
 RUN npm install --workspaces --include-workspace-root
 
 FROM base AS build
+COPY package.json package-lock.json* ./
 COPY --from=deps /repo/node_modules ./node_modules
 COPY packages/db packages/db
 COPY packages/crypto packages/crypto
@@ -31,6 +34,7 @@ ENV JWT_SECRET=build-only-placeholder
 RUN npm run build --workspace=apps/web
 
 FROM node:20-alpine AS runner
+RUN apk add --no-cache openssl
 WORKDIR /repo
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
