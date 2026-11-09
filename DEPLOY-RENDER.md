@@ -32,6 +32,7 @@ Do not reuse your local keys, do not commit these, and keep the private key out 
    - `LEDGER_AUTH_KEY` (web and worker): paste the same value in both.
    - `PLATFORM_ADMIN_EMAILS` (web): your admin email(s), comma-separated.
    - `CHECKPOINT_PRIVATE_KEY` (worker): paste the private key line.
+   - `MAIL_API_KEY`, `MAIL_FROM` and `APP_BASE_URL` (web): for password reset email. You can leave them blank now and fill them in later (see "Password reset email" below). Until then, password reset is unavailable.
 4. Click **Apply**. If Render rejects a plan name in `render.yaml`, choose the plan in the dashboard instead.
 
 Region is set to Frankfurt (usually closest to West Africa). Change `region` in `render.yaml` before applying if you prefer another.
@@ -50,6 +51,25 @@ The production database starts empty.
 
 1. Open the web service URL and go to **/register** to create your organisation. The first user becomes organisation admin.
 2. Register with the same email you put in `PLATFORM_ADMIN_EMAILS` to get the **Platform Admin** link.
+
+## Password reset email
+
+In production the app never shows a reset link on screen: anyone who knew an account's email address could use it to take over the account. It sends the link to the account's address instead. Until email is set up, the "Forgot password" page tells the person to contact whoever runs the system, and no reset link is created. The platform admin console can still reset a password.
+
+Set it up once with a provider that has a free tier. The app sends over HTTPS, not SMTP (Render blocks SMTP on some plans). **Brevo** is the easiest because it lets you send from a single verified address with no domain of your own.
+
+1. Create a free account at brevo.com.
+2. In Brevo, add and verify a **sender**: the address the emails will come from. Brevo emails a confirmation link to it. A mailbox on your own domain is delivered more reliably than a free Gmail address, which can land in spam.
+3. In Brevo, open **SMTP & API**, then **API keys**, and generate a key. Copy it once.
+4. In Render, open `secureledger-web`, then **Environment**, and add:
+   - `MAIL_PROVIDER` = `brevo`
+   - `MAIL_API_KEY` = the key from step 3 (a secret: never paste it into chat or commit it)
+   - `MAIL_FROM` = the verified sender address from step 2
+   - `APP_BASE_URL` = the public address of the app, for example `https://secureledger-web.onrender.com` (use your custom domain if you add one)
+5. Save. Render redeploys the web service.
+6. Test: on the login page, choose **Forgot password**, enter the email of an account you own, and check that the email arrives and the link opens the reset page. The page itself will only say that a link has been sent; it never shows the link and never says whether the address is registered.
+
+If the email does not arrive, check spam, check that the sender is verified in Brevo, and look at the web service logs for `Password reset email failed`. `Resend` is also supported (`MAIL_PROVIDER=resend`), but it only sends to addresses beyond your own once you have verified a domain.
 
 ## 6. Custom domain (optional)
 

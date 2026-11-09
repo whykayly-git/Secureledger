@@ -44,6 +44,11 @@ services:
       # Public key only — the private key never enters this service's environment.
       CHECKPOINT_PUBLIC_KEY: ${CHECKPOINT_PUBLIC_KEY}
       LEDGER_AUTH_KEY: ${LEDGER_AUTH_KEY}
+      # Password reset email (optional). Without these, password reset is unavailable in production.
+      MAIL_PROVIDER: ${MAIL_PROVIDER:-}
+      MAIL_API_KEY: ${MAIL_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      APP_BASE_URL: ${APP_BASE_URL:-}
       NODE_ENV: production
     ports:
       - "3000:3000"

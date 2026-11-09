@@ -25,7 +25,8 @@ export default function ForgotPasswordPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Something went wrong");
       setMessage(data.message);
-      setResetLink(`${window.location.origin}${data.resetPath}`);
+      // The server only returns a link in development. In production it emails the link instead.
+      setResetLink(data.resetPath ? `${window.location.origin}${data.resetPath}` : null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -52,7 +53,7 @@ export default function ForgotPasswordPage() {
         <Card>
           <h1 className="text-xl font-bold text-slate-900">Reset your password</h1>
           <p className="mt-1 text-sm font-medium text-slate-500">
-            Enter your account email and we&apos;ll generate a reset link.
+            Enter your account email and we&apos;ll send you a reset link.
           </p>
 
           {!message ? (

@@ -23,6 +23,15 @@ services:
         sync: false
       - key: PLATFORM_ADMIN_EMAILS
         sync: false
+      # Password reset email. Without these, production creates no reset links at all.
+      - key: MAIL_PROVIDER
+        value: brevo
+      - key: MAIL_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
       - key: NODE_ENV
         value: production
 
