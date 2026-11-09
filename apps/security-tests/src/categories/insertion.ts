@@ -1,20 +1,21 @@
 import { prisma, PrismaClient } from "@secureledger/db";
-import { sha256Hex, computeChainHash } from "@secureledger/crypto";
-import { journalEntryHashFields } from "@secureledger/ledger";
+import { sha256Hex, computeChainHash, computeChainAuthTag } from "@secureledger/crypto";
+import { journalEntryHashFields, getLedgerAuthKey } from "@secureledger/ledger";
 import { verifyLedgerChainEntryById, verifyChainContinuity } from "@secureledger/verification";
 import { createTestOrganisation, postJournalEntry, runCheckpoint, teardownOrganisation, TestOrgContext } from "../harness";
 import { runTrial, TrialResult } from "../categoryTrial";
 
 /**
- * Category (c) — Insertion of an unauthorised entry (8 trials).
+ * Category (c) — Insertion of an unauthorised entry (9 trials).
  *
  * Directly INSERTs a new LedgerChain row via Prisma, bypassing
  * appendLedgerChainEntry entirely (so the attacker must forge whatever
  * hash/previousHash/sequenceNumber they want by hand). Explores the real
  * range of attacker sophistication: from "no backing record at all" up to
- * "computed everything correctly" — and is honest that the top of that
- * range is fundamentally indistinguishable from a legitimate write, which
- * is a property of hash chains generally, not a bug in this codebase.
+ * "computed everything the public scheme requires" (c-5), which the keyed
+ * authentication tag now catches, and finally an attacker who also holds
+ * the ledger authentication key (c-9). That last case is honest about the
+ * boundary: whoever holds the key is indistinguishable from the application.
  */
 
 async function makeFakeJournalEntry(ctx: TestOrgContext, description: string) {
@@ -191,7 +192,7 @@ export async function runInsertionCategory(): Promise<TrialResult[]> {
       try {
         return await runTrial(
           "c-5",
-          "(c-5) Insert appended at the tip with a fully correct hash/previousHash/sequenceNumber (known, honest limitation)",
+          "(c-5) Insert appended at the tip with a fully correct hash/previousHash/sequenceNumber, by an attacker with database access only (no authentication key)",
           async () => {
             await postJournalEntry(ctx, "A", 10);
             const tip = await currentTip(ctx.organisationId);
@@ -211,7 +212,53 @@ export async function runInsertionCategory(): Promise<TrialResult[]> {
             const continuity = await verifyChainContinuity(ctx.organisationId);
             return {
               detected: result?.verdict === "failed" || !continuity.intact,
-              detail: `Inserted row ${fake.id} with a genuinely correctly-computed hash, previousHash, and sequenceNumber matching what a real append would produce. Verdict: ${result?.verdict}. Continuity intact: ${continuity.intact}. This is not a bounded gap in the verification logic — a raw-DB attacker who correctly computes every chained field produces data that IS a valid chain; only the write path's authentication/authorization (JWT + RBAC on /api routes) prevents this in production, not the read-side integrity checks.`,
+              detail: `Inserted row ${fake.id} with a genuinely correctly-computed hash, previousHash, and sequenceNumber matching what a real append would produce. Verdict: ${result?.verdict}. Continuity intact: ${continuity.intact}. The hash method is public, so every chained field is correct, but the row cannot carry the keyed authentication tag, which only the application and the checkpoint worker can compute.`,
+            };
+          }
+        );
+      } finally {
+        await teardownOrganisation(ctx.organisationId);
+      }
+    })()
+  );
+
+  results.push(
+    await (async () => {
+      const ctx = await createTestOrganisation("c-9-attacker-holds-key");
+      try {
+        return await runTrial(
+          "c-9",
+          "(c-9) Insert appended at the tip with a fully correct hash/previousHash/sequenceNumber AND a valid authentication tag, by an attacker who holds the ledger authentication key (known, honest limitation)",
+          async () => {
+            await postJournalEntry(ctx, "A", 10);
+            const tip = await currentTip(ctx.organisationId);
+            const fakeEntry = await makeFakeJournalEntry(ctx, "Fabricated by a holder of the authentication key");
+            const hash = computeChainHash(journalEntryHashFields(fakeEntry), tip!.hash);
+            const sequenceNumber = tip!.sequenceNumber + 1;
+            const key = getLedgerAuthKey();
+            if (!key) throw new Error("c-9 needs LEDGER_AUTH_KEY to be set");
+            const fake = await prisma.ledgerChain.create({
+              data: {
+                organisationId: ctx.organisationId,
+                recordType: "JOURNAL_ENTRY",
+                recordId: fakeEntry.id,
+                hash,
+                previousHash: tip!.hash,
+                sequenceNumber,
+                authTag: computeChainAuthTag(key, {
+                  organisationId: ctx.organisationId,
+                  recordType: "JOURNAL_ENTRY",
+                  recordId: fakeEntry.id,
+                  sequenceNumber,
+                  hash,
+                }),
+              },
+            });
+            const result = await verifyLedgerChainEntryById(fake.id, ctx.organisationId);
+            const continuity = await verifyChainContinuity(ctx.organisationId);
+            return {
+              detected: result?.verdict === "failed" || !continuity.intact,
+              detail: `Inserted row ${fake.id} with a correct hash, previousHash and sequenceNumber and a tag computed with the real authentication key. Verdict: ${result?.verdict}. Continuity intact: ${continuity.intact}. Whoever holds the key is indistinguishable from the application, so this is a boundary of the design: the control is keeping the key out of the database and away from anyone who is not the application.`,
             };
           }
         );
